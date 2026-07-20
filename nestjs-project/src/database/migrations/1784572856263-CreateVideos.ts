@@ -1,7 +1,7 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class CreateVideos1784572031368 implements MigrationInterface {
-  name = 'CreateVideos1784572031368';
+export class CreateVideos1784572856263 implements MigrationInterface {
+  name = 'CreateVideos1784572856263';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(
@@ -14,9 +14,6 @@ export class CreateVideos1784572031368 implements MigrationInterface {
       `CREATE INDEX "IDX_023a8e4f3f1a34ff3d8ca04a4c" ON "videos" ("channel_id") `,
     );
     await queryRunner.query(
-      `CREATE UNIQUE INDEX "IDX_5dbcc1ee100f853490582eccc7" ON "videos" ("slug") `,
-    );
-    await queryRunner.query(
       `ALTER TABLE "videos" ADD CONSTRAINT "FK_023a8e4f3f1a34ff3d8ca04a4cc" FOREIGN KEY ("channel_id") REFERENCES "channels"("id") ON DELETE NO ACTION ON UPDATE NO ACTION`,
     );
   }
@@ -24,9 +21,6 @@ export class CreateVideos1784572031368 implements MigrationInterface {
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(
       `ALTER TABLE "videos" DROP CONSTRAINT "FK_023a8e4f3f1a34ff3d8ca04a4cc"`,
-    );
-    await queryRunner.query(
-      `DROP INDEX "public"."IDX_5dbcc1ee100f853490582eccc7"`,
     );
     await queryRunner.query(
       `DROP INDEX "public"."IDX_023a8e4f3f1a34ff3d8ca04a4c"`,

@@ -33,7 +33,6 @@ export class Video {
   @Column({ type: 'varchar', length: 150 })
   title: string;
 
-  @Index({ unique: true })
   @Column({ type: 'varchar', length: 11, unique: true })
   slug: string;
 
