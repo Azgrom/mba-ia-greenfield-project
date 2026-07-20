@@ -77,6 +77,8 @@ One presigned `PutObject` URL for the whole file.
 
 **Decision:** The worker is a **second bootstrap entrypoint inside the same `nestjs-project` codebase** (`src/video-worker/main.ts`, `NestFactory.createApplicationContext`), not a separate package. It reuses the same `Video` TypeORM entity, the same `registerAs` config pattern, and the same `StorageService` as the API — this is the "continuity, not rework" principle from `CLAUDE.md` applied literally: one dependency tree, one migration history, one set of conventions. It runs as its own Compose service (`video-worker`) with its own `CMD`, consuming the `video-processing` BullMQ queue via `@Processor`/`WorkerHost`. FFmpeg/ffprobe come from the npm-vendored static binaries `ffmpeg-static` + `@ffprobe-installer/ffprobe` (glibc-linked, compatible with the existing `node:25.6.0-slim` — Debian, not Alpine — base image) driven through `fluent-ffmpeg`, avoiding any Dockerfile/apt changes. Metadata comes from `ffmpeg.ffprobe()` (duration, width, height, codec, bitrate); the thumbnail comes from `.screenshots({ timestamps: ['25%'] })` (a frame 25% into the video, per the "generate from a frame" requirement — picked over `0%`/`00:00` to avoid black opening frames/intro cards being common at true start).
 
+**Rejected alternative:** running the worker as a fully separate Node project/package was considered and rejected — it would duplicate the `Video` entity, TypeORM DataSource config, and env/config loading with no benefit, directly working against "Continuidade, não retrabalho."
+
 ---
 
 ## TD-04: Unique URL and Streaming Strategy
