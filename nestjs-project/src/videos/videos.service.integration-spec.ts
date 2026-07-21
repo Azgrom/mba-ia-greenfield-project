@@ -1,6 +1,8 @@
 import { DataSource, Repository } from 'typeorm';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigModule } from '@nestjs/config';
+import { getQueueToken } from '@nestjs/bullmq';
+import type { Queue } from 'bullmq';
 import {
   cleanAllTables,
   createTestDataSource,
@@ -19,6 +21,10 @@ import { StorageService } from '../storage/storage.service';
 import { InitiateUploadDto } from './dto/initiate-upload.dto';
 import { CompleteUploadDto } from './dto/complete-upload.dto';
 import { VideoQueueService } from '../queue/video-queue.service';
+import {
+  VIDEO_PROCESSING_QUEUE,
+  type ProcessVideoJobData,
+} from '../queue/video-queue.constants';
 
 const ALL_ENTITIES = [User, Channel, Video, RefreshToken, VerificationToken];
 
@@ -215,7 +221,7 @@ describe('VideosService (integration)', () => {
   });
 
   describe('completeUpload', () => {
-    it('completes upload and enqueues processing job', async () => {
+    it('completes upload and enqueues processing job with real storage and queue', async () => {
       const { channel } = await createUserWithChannel();
 
       // Step 1: Initiate upload
@@ -223,7 +229,7 @@ describe('VideosService (integration)', () => {
         title: 'Test Video Upload',
         originalFilename: 'video.mp4',
         mimeType: 'video/mp4',
-        fileSizeBytes: 104857600, // 100 MiB
+        fileSizeBytes: 104857600, // 100 MiB — single part
       };
 
       const initiateResult = await videosService.initiateUpload(
@@ -233,24 +239,25 @@ describe('VideosService (integration)', () => {
 
       expect(initiateResult.id).toBeDefined();
       expect(initiateResult.uploadId).toBeDefined();
+      expect(initiateResult.parts).toHaveLength(1);
 
       let video = await videoRepository.findOneBy({ id: initiateResult.id });
       expect(video!.status).toBe(VideoStatus.DRAFT);
       expect(video!.upload_id).toBe(initiateResult.uploadId);
 
-      // Mock the completeMultipartUpload to avoid needing real S3 parts
-      jest
-        .spyOn(storageService, 'completeMultipartUpload')
-        .mockResolvedValue(undefined);
+      // Step 2: Upload real part data via presigned URL
+      const part1Data = Buffer.alloc(6 * 1024 * 1024).fill('a');
+      const uploadResponse = await fetch(initiateResult.parts[0].url, {
+        method: 'PUT',
+        body: part1Data,
+      });
+      expect(uploadResponse.status).toBe(200);
+      const capturedEtag = uploadResponse.headers.get('etag');
+      expect(capturedEtag).toBeDefined();
 
-      // Mock the enqueueProcessing to verify it's called
-      const enqueueSpy = jest
-        .spyOn(videoQueueService, 'enqueueProcessing')
-        .mockResolvedValue(undefined);
-
-      // Step 2: Complete upload
+      // Step 3: Complete upload with real ETag
       const completeDto: CompleteUploadDto = {
-        parts: [{ partNumber: 1, etag: 'etag-abc123' }],
+        parts: [{ partNumber: 1, etag: capturedEtag! }],
       };
 
       const completeResult = await videosService.completeUpload(
@@ -263,14 +270,28 @@ describe('VideosService (integration)', () => {
       expect(completeResult.status).toBe(VideoStatus.PROCESSING);
       expect(completeResult.upload_id).toBeNull();
 
-      // Step 3: Verify video was updated in DB
+      // Step 4: Verify video was updated in DB
       video = await videoRepository.findOneBy({ id: initiateResult.id });
       expect(video!.status).toBe(VideoStatus.PROCESSING);
       expect(video!.upload_id).toBeNull();
 
-      // Step 4: Verify enqueueProcessing was called
-      expect(enqueueSpy).toHaveBeenCalledWith(initiateResult.id);
-      expect(enqueueSpy).toHaveBeenCalledTimes(1);
+      // Step 5: Get real BullMQ Queue instance and verify job was enqueued
+      const queue = storageTestingModule.get<Queue<ProcessVideoJobData>>(
+        getQueueToken(VIDEO_PROCESSING_QUEUE),
+      );
+      const jobs = await queue.getJobs(['waiting', 'delayed', 'active']);
+      const job = jobs.find((j) => j.data.videoId === initiateResult.id);
+      expect(job).toBeDefined();
+
+      // Step 6: Verify job options match acceptance criteria
+      expect(job!.opts.attempts).toBe(3);
+      expect(job!.opts.backoff).toEqual({
+        type: 'exponential',
+        delay: 5000,
+      });
+
+      // Step 7: Clean up the test job
+      await job!.remove();
     });
   });
 

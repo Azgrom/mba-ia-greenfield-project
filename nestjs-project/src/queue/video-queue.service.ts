@@ -19,15 +19,25 @@ export class VideoQueueService {
   ) {}
 
   async enqueueProcessing(videoId: string): Promise<void> {
-    await this.queue.add(
-      PROCESS_VIDEO_JOB,
-      { videoId },
-      {
-        attempts: this.queueConfiguration.videoProcessingAttempts,
-        backoff: { type: 'exponential', delay: 5000 },
-        removeOnComplete: true,
-        removeOnFail: false,
-      },
-    );
+    const maxAttempts = 3;
+    const retryDelayMs = 500;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        await this.queue.add(
+          PROCESS_VIDEO_JOB,
+          { videoId },
+          {
+            attempts: this.queueConfiguration.videoProcessingAttempts,
+            backoff: { type: 'exponential', delay: 5000 },
+            removeOnComplete: true,
+            removeOnFail: false,
+          },
+        );
+        return;
+      } catch (err) {
+        if (attempt === maxAttempts) throw err;
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      }
+    }
   }
 }

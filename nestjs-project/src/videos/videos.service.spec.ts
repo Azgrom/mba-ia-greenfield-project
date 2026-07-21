@@ -13,6 +13,7 @@ import { VideoQueueService } from '../queue/video-queue.service';
 import { VideoNotFoundException } from './exceptions/video-not-found.exception';
 import { UploadAlreadyCompletedException } from './exceptions/upload-already-completed.exception';
 import { MultipartUploadFailedException } from './exceptions/multipart-upload-failed.exception';
+import { VideoProcessingEnqueueFailedException } from './exceptions/video-processing-enqueue-failed.exception';
 
 describe('VideosService', () => {
   let service: VideosService;
@@ -613,6 +614,62 @@ describe('VideosService', () => {
         'video-123',
       );
       expect(videoQueueService.enqueueProcessing).toHaveBeenCalledTimes(1);
+    });
+
+    it('throws VideoProcessingEnqueueFailedException when enqueue fails, but video is already saved as PROCESSING', async () => {
+      const mockVideo: Video = {
+        id: 'video-123',
+        channel_id: 'channel-123',
+        title: 'Test Video',
+        slug: 'test-slug',
+        status: VideoStatus.DRAFT,
+        storage_key: 'videos/channel-123/video-123/original.mp4',
+        thumbnail_key: null,
+        upload_id: 'upload-123',
+        original_filename: 'video.mp4',
+        mime_type: 'video/mp4',
+        file_size_bytes: '104857600',
+        duration_seconds: null,
+        metadata: null,
+        error_message: null,
+        channel: undefined as any,
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+
+      const updatedVideo: Video = {
+        ...mockVideo,
+        status: VideoStatus.PROCESSING,
+        upload_id: null,
+      };
+
+      jest.spyOn(videoRepository, 'findOneBy').mockResolvedValue(mockVideo);
+      jest
+        .spyOn(storageService, 'completeMultipartUpload')
+        .mockResolvedValue(undefined);
+      jest.spyOn(videoRepository, 'save').mockResolvedValue(updatedVideo);
+      jest
+        .spyOn(videoQueueService, 'enqueueProcessing')
+        .mockRejectedValue(new Error('Redis connection failed'));
+
+      const dto: CompleteUploadDto = {
+        parts: [{ partNumber: 1, etag: 'etag-1' }],
+      };
+
+      const error = await service
+        .completeUpload('channel-123', 'video-123', dto)
+        .catch((err) => err);
+
+      expect(error).toBeInstanceOf(VideoProcessingEnqueueFailedException);
+      expect(error.errorCode).toBe('VIDEO_PROCESSING_ENQUEUE_FAILED');
+
+      // Verify that videoRepository.save was called before the enqueue failure
+      expect(videoRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: VideoStatus.PROCESSING,
+          upload_id: null,
+        }),
+      );
     });
   });
 

@@ -125,6 +125,11 @@ export class VideosController {
     description: 'Multipart upload failed',
     schema: { $ref: getSchemaPath(ApiErrorEnvelope) },
   })
+  @ApiResponse({
+    status: 502,
+    description: 'Failed to enqueue video for processing',
+    schema: { $ref: getSchemaPath(ApiErrorEnvelope) },
+  })
   async completeUpload(
     @CurrentUser() currentUser: JwtPayload,
     @Param('id', new ParseUUIDPipe()) id: string,

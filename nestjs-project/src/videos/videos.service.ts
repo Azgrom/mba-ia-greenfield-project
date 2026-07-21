@@ -16,6 +16,7 @@ import { generateSlug } from './slug.util';
 import { VideoNotFoundException } from './exceptions/video-not-found.exception';
 import { UploadAlreadyCompletedException } from './exceptions/upload-already-completed.exception';
 import { MultipartUploadFailedException } from './exceptions/multipart-upload-failed.exception';
+import { VideoProcessingEnqueueFailedException } from './exceptions/video-processing-enqueue-failed.exception';
 import { VideoQueueService } from '../queue/video-queue.service';
 
 const PG_UNIQUE_VIOLATION = '23505';
@@ -144,7 +145,11 @@ export class VideosService {
     video.status = VideoStatus.PROCESSING;
     video.upload_id = null;
     await this.videoRepository.save(video);
-    await this.videoQueueService.enqueueProcessing(video.id);
+    try {
+      await this.videoQueueService.enqueueProcessing(video.id);
+    } catch {
+      throw new VideoProcessingEnqueueFailedException();
+    }
     return video;
   }
 
