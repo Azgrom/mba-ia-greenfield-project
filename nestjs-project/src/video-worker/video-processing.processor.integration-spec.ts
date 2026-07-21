@@ -17,7 +17,10 @@ import { Channel } from '../channels/entities/channel.entity';
 import { User } from '../users/entities/user.entity';
 import { StorageModule } from '../storage/storage.module';
 import { StorageService } from '../storage/storage.service';
-import { VideoProcessingProcessor } from './video-processing.processor';
+import {
+  VideoProcessingProcessor,
+  resolveVideoWorkerConcurrency,
+} from './video-processing.processor';
 import type { ProcessVideoJobData } from '../queue/video-queue.constants';
 import ffmpegPath from 'ffmpeg-static';
 
@@ -97,6 +100,19 @@ describe('VideoProcessingProcessor (integration)', () => {
       await app.close();
     }
   }, 30000);
+
+  describe('resolveVideoWorkerConcurrency', () => {
+    it('uses a positive integer environment value', () => {
+      expect(resolveVideoWorkerConcurrency('4')).toBe(4);
+    });
+
+    it('falls back to 2 for missing or invalid values', () => {
+      expect(resolveVideoWorkerConcurrency(undefined)).toBe(2);
+      expect(resolveVideoWorkerConcurrency('0')).toBe(2);
+      expect(resolveVideoWorkerConcurrency('-1')).toBe(2);
+      expect(resolveVideoWorkerConcurrency('not-a-number')).toBe(2);
+    });
+  });
 
   describe('process', () => {
     it('should extract metadata, generate thumbnail, and update video to ready', async () => {

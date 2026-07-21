@@ -34,8 +34,17 @@ interface FfprobeData {
   }>;
 }
 
+export function resolveVideoWorkerConcurrency(value?: string): number {
+  const parsed = Number.parseInt(value ?? '2', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 2;
+}
+
 @Injectable()
-@Processor(VIDEO_PROCESSING_QUEUE)
+@Processor(VIDEO_PROCESSING_QUEUE, {
+  concurrency: resolveVideoWorkerConcurrency(
+    process.env.VIDEO_WORKER_CONCURRENCY,
+  ),
+})
 export class VideoProcessingProcessor extends WorkerHost {
   constructor(
     @InjectRepository(Video)
