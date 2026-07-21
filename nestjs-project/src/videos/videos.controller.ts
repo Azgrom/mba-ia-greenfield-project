@@ -243,4 +243,40 @@ export class VideosController {
     });
     body.pipe(res);
   }
+
+  @Get(':slug/download')
+  @Public()
+  @ApiOperation({
+    summary: 'Download video file',
+    description:
+      'Redirects to a short-lived presigned URL for downloading the video with the original filename.',
+  })
+  @ApiResponse({
+    status: 302,
+    description: 'Redirect to presigned download URL',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Video not found',
+    schema: { $ref: getSchemaPath(ApiErrorEnvelope) },
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'Video is not ready for download',
+    schema: { $ref: getSchemaPath(ApiErrorEnvelope) },
+  })
+  async download(
+    @Param('slug') slug: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    const video = await this.videosService.findBySlugOrFail(slug);
+    if (video.status !== VideoStatus.READY) {
+      throw new VideoNotReadyException();
+    }
+    const url = await this.storageService.getPresignedGetUrl(
+      video.storage_key,
+      `attachment; filename="${video.original_filename}"`,
+    );
+    res.redirect(302, url);
+  }
 }

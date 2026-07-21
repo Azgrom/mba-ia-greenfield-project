@@ -834,6 +834,194 @@ describe('Videos (e2e)', () => {
     });
   });
 
+  describe('GET /videos/:slug/download', () => {
+    let downloadVideoSlug: string;
+    let downloadVideoStorageKey: string;
+    let downloadVideoOriginalFilename: string;
+
+    beforeEach(async () => {
+      // Create a user and channel
+      const { access_token } = await registerConfirmAndLogin(
+        'downloadtest@example.com',
+      );
+
+      const channel = await channelRepository.findOneBy({
+        user_id: (
+          await dataSource.query(
+            "SELECT id FROM users WHERE email = 'downloadtest@example.com'",
+          )
+        )[0].id,
+      });
+
+      // Generate a unique storage key
+      downloadVideoStorageKey = `videos/download-test-${Date.now()}-${Math.random().toString(36).substr(2, 9)}.bin`;
+
+      // Upload a test object to MinIO with some content
+      const testVideoContent = Buffer.alloc(1000);
+      testVideoContent.fill('y');
+      await storageService.putObject(
+        downloadVideoStorageKey,
+        testVideoContent,
+        'video/mp4',
+      );
+
+      // Create a ready video with the storage_key pointing to the real object
+      downloadVideoOriginalFilename = 'my-video.mp4';
+      downloadVideoSlug = `dwn${Math.random().toString(36).substr(2, 8)}`;
+      const readyVideo = videoRepository.create({
+        channel_id: channel!.id,
+        title: 'Download Test Video',
+        slug: downloadVideoSlug,
+        status: VideoStatus.READY,
+        storage_key: downloadVideoStorageKey,
+        original_filename: downloadVideoOriginalFilename,
+        mime_type: 'video/mp4',
+        file_size_bytes: '1000',
+        duration_seconds: 10.0,
+        thumbnail_key: null,
+      });
+      await videoRepository.save(readyVideo);
+    });
+
+    it('returns 302 redirect to presigned URL for a ready video', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/videos/${downloadVideoSlug}/download`)
+        .expect(302);
+
+      // Verify Location header is present and is a URL
+      expect(res.headers.location).toBeDefined();
+      expect(typeof res.headers.location).toBe('string');
+      expect(res.headers.location).toMatch(/^https?:\/\//);
+    });
+
+    it('presigned URL is passed to getPresignedGetUrl with correct Content-Disposition parameter', async () => {
+      // Mock getPresignedGetUrl to capture what it's called with
+      const mockPresignedUrl =
+        'https://minio.example.com/presigned-download-url';
+      const getPresignedGetUrlSpy = jest
+        .spyOn(storageService, 'getPresignedGetUrl')
+        .mockResolvedValue(mockPresignedUrl);
+
+      const res = await request(app.getHttpServer())
+        .get(`/videos/${downloadVideoSlug}/download`)
+        .expect(302);
+
+      // Verify the redirect Location header is set
+      expect(res.headers.location).toBe(mockPresignedUrl);
+
+      // Verify that getPresignedGetUrl was called with the correct parameters
+      expect(getPresignedGetUrlSpy).toHaveBeenCalledWith(
+        downloadVideoStorageKey,
+        `attachment; filename="${downloadVideoOriginalFilename}"`,
+      );
+
+      getPresignedGetUrlSpy.mockRestore();
+    });
+
+    it('returns 404 VIDEO_NOT_FOUND for unknown slug', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/videos/nonexistent-download-slug')
+        .expect(404);
+
+      expect(res.body.error).toBe('VIDEO_NOT_FOUND');
+    });
+
+    it('returns 409 VIDEO_NOT_READY when video status is draft', async () => {
+      const channel = await channelRepository.findOneBy({
+        user_id: (
+          await dataSource.query(
+            "SELECT id FROM users WHERE email = 'downloadtest@example.com'",
+          )
+        )[0].id,
+      });
+
+      const draftSlug = `dft${Math.random().toString(36).substr(2, 8)}`;
+      const draftVideo = videoRepository.create({
+        channel_id: channel!.id,
+        title: 'Draft Video',
+        slug: draftSlug,
+        status: VideoStatus.DRAFT,
+        storage_key: 'videos/draft.mp4',
+        original_filename: 'video.mp4',
+        mime_type: 'video/mp4',
+        file_size_bytes: '1000',
+      });
+      await videoRepository.save(draftVideo);
+
+      const res = await request(app.getHttpServer())
+        .get(`/videos/${draftSlug}/download`)
+        .expect(409);
+
+      expect(res.body.error).toBe('VIDEO_NOT_READY');
+    });
+
+    it('returns 409 VIDEO_NOT_READY when video status is processing', async () => {
+      const channel = await channelRepository.findOneBy({
+        user_id: (
+          await dataSource.query(
+            "SELECT id FROM users WHERE email = 'downloadtest@example.com'",
+          )
+        )[0].id,
+      });
+
+      const procSlug = `prc${Math.random().toString(36).substr(2, 8)}`;
+      const procVideo = videoRepository.create({
+        channel_id: channel!.id,
+        title: 'Processing Video',
+        slug: procSlug,
+        status: VideoStatus.PROCESSING,
+        storage_key: 'videos/processing.mp4',
+        original_filename: 'video.mp4',
+        mime_type: 'video/mp4',
+        file_size_bytes: '1000',
+      });
+      await videoRepository.save(procVideo);
+
+      const res = await request(app.getHttpServer())
+        .get(`/videos/${procSlug}/download`)
+        .expect(409);
+
+      expect(res.body.error).toBe('VIDEO_NOT_READY');
+    });
+
+    it('returns 409 VIDEO_NOT_READY when video status is error', async () => {
+      const channel = await channelRepository.findOneBy({
+        user_id: (
+          await dataSource.query(
+            "SELECT id FROM users WHERE email = 'downloadtest@example.com'",
+          )
+        )[0].id,
+      });
+
+      const errSlug = `err${Math.random().toString(36).substr(2, 8)}`;
+      const errVideo = videoRepository.create({
+        channel_id: channel!.id,
+        title: 'Error Video',
+        slug: errSlug,
+        status: VideoStatus.ERROR,
+        storage_key: 'videos/error.mp4',
+        original_filename: 'video.mp4',
+        mime_type: 'video/mp4',
+        file_size_bytes: '1000',
+      });
+      await videoRepository.save(errVideo);
+
+      const res = await request(app.getHttpServer())
+        .get(`/videos/${errSlug}/download`)
+        .expect(409);
+
+      expect(res.body.error).toBe('VIDEO_NOT_READY');
+    });
+
+    it('is publicly accessible without Authorization header', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/videos/${downloadVideoSlug}/download`)
+        .expect(302);
+
+      expect(res.headers.location).toBeDefined();
+    });
+  });
+
   describe('GET /videos/:slug/stream', () => {
     let readyVideoSlug: string;
     let readyVideoStorageKey: string;
