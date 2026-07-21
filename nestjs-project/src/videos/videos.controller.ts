@@ -234,6 +234,13 @@ export class VideosController {
       'Content-Length': String(contentLength),
       ...(contentRange && { 'Content-Range': contentRange }),
     });
+    body.on('error', () => {
+      if (!res.headersSent) {
+        res.status(500).end();
+      } else {
+        res.destroy();
+      }
+    });
     body.pipe(res);
   }
 }
