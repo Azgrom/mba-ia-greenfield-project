@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
   NotFoundException,
@@ -19,18 +20,22 @@ import {
 } from '@nestjs/swagger';
 import type { JwtPayload } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Public } from '../auth/decorators/public.decorator';
 import { ApiErrorEnvelope } from '../common/openapi/api-error-envelope.dto';
 import { Channel } from '../channels/entities/channel.entity';
 import { VideosService } from './videos.service';
 import { InitiateUploadDto } from './dto/initiate-upload.dto';
 import { InitiateUploadResponseDto } from './dto/initiate-upload-response.dto';
 import { CompleteUploadDto } from './dto/complete-upload.dto';
+import { VideoDetailDto } from './dto/video-detail.dto';
+import { StorageService } from '../storage/storage.service';
 
 @ApiTags('videos')
 @Controller('videos')
 export class VideosController {
   constructor(
     private readonly videosService: VideosService,
+    private readonly storageService: StorageService,
     @InjectRepository(Channel)
     private readonly channelRepository: Repository<Channel>,
   ) {}
@@ -150,5 +155,26 @@ export class VideosController {
       slug: video.slug,
       status: video.status,
     };
+  }
+
+  @Get(':slug')
+  @Public()
+  @ApiOperation({
+    summary: 'Get video detail by slug',
+    description: "Retrieve a video's current status and metadata by slug.",
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Video details retrieved successfully',
+    schema: { $ref: getSchemaPath(VideoDetailDto) },
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Video not found',
+    schema: { $ref: getSchemaPath(ApiErrorEnvelope) },
+  })
+  async getVideoBySlug(@Param('slug') slug: string): Promise<VideoDetailDto> {
+    const video = await this.videosService.findBySlugOrFail(slug);
+    return VideoDetailDto.fromEntity(video, this.storageService);
   }
 }

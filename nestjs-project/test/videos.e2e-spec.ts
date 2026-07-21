@@ -6,7 +6,7 @@ import { DataSource, Repository } from 'typeorm';
 import { ThrottlerStorage, ThrottlerStorageService } from '@nestjs/throttler';
 import { AppModule } from '../src/app.module';
 import { AuthService } from '../src/auth/auth.service';
-import { Video } from '../src/videos/entities/video.entity';
+import { Video, VideoStatus } from '../src/videos/entities/video.entity';
 import { Channel } from '../src/channels/entities/channel.entity';
 import { DomainExceptionFilter } from '../src/common/filters/domain-exception.filter';
 import { ValidationExceptionFilter } from '../src/common/filters/validation-exception.filter';
@@ -603,6 +603,234 @@ describe('Videos (e2e)', () => {
         .expect(401);
 
       expect(res.body).toBeDefined();
+    });
+  });
+
+  describe('GET /videos/:slug', () => {
+    it('returns 200 with full VideoDetailDto for a draft video', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'getdraft@example.com',
+      );
+
+      // Mock storage
+      jest
+        .spyOn(storageService, 'createMultipartUpload')
+        .mockResolvedValue('upload-id-123');
+      jest
+        .spyOn(storageService, 'getPresignedUploadPartUrls')
+        .mockResolvedValue([
+          { partNumber: 1, url: 'https://s3.example.com/part1' },
+        ] as PresignedPart[]);
+
+      // Initiate upload to create a draft video
+      const initiateRes = await request(app.getHttpServer())
+        .post('/videos')
+        .set('Authorization', `Bearer ${access_token}`)
+        .send({
+          title: 'Draft Video for Detail',
+          originalFilename: 'video.mp4',
+          mimeType: 'video/mp4',
+          fileSizeBytes: 104857600,
+        })
+        .expect(201);
+
+      const videoSlug = initiateRes.body.slug;
+
+      // Fetch the video detail without Authorization
+      const res = await request(app.getHttpServer())
+        .get(`/videos/${videoSlug}`)
+        .expect(200);
+
+      expect(res.body.id).toBeDefined();
+      expect(typeof res.body.id).toBe('string');
+      expect(res.body.slug).toBe(videoSlug);
+      expect(res.body.title).toBe('Draft Video for Detail');
+      expect(res.body.status).toBe('draft');
+      expect(res.body.durationSeconds).toBeNull();
+      expect(res.body.thumbnailUrl).toBeNull();
+      expect(res.body.createdAt).toBeDefined();
+    });
+
+    it('returns 200 with null thumbnailUrl for processing video', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'getprocessing@example.com',
+      );
+
+      // Mock storage
+      jest
+        .spyOn(storageService, 'createMultipartUpload')
+        .mockResolvedValue('upload-id-123');
+      jest
+        .spyOn(storageService, 'getPresignedUploadPartUrls')
+        .mockResolvedValue([
+          { partNumber: 1, url: 'https://s3.example.com/part1' },
+        ] as PresignedPart[]);
+      jest
+        .spyOn(storageService, 'completeMultipartUpload')
+        .mockResolvedValue(undefined);
+
+      // Initiate upload
+      const initiateRes = await request(app.getHttpServer())
+        .post('/videos')
+        .set('Authorization', `Bearer ${access_token}`)
+        .send({
+          title: 'Processing Video',
+          originalFilename: 'video.mp4',
+          mimeType: 'video/mp4',
+          fileSizeBytes: 104857600,
+        })
+        .expect(201);
+
+      const videoId = initiateRes.body.id;
+      const videoSlug = initiateRes.body.slug;
+
+      // Complete upload to move to processing status
+      await request(app.getHttpServer())
+        .post(`/videos/${videoId}/complete-upload`)
+        .set('Authorization', `Bearer ${access_token}`)
+        .send({
+          parts: [{ partNumber: 1, etag: 'etag-abc123' }],
+        })
+        .expect(200);
+
+      // Fetch video detail
+      const res = await request(app.getHttpServer())
+        .get(`/videos/${videoSlug}`)
+        .expect(200);
+
+      expect(res.body.status).toBe('processing');
+      expect(res.body.thumbnailUrl).toBeNull();
+    });
+
+    it('returns 200 with presigned thumbnailUrl for ready video with thumbnail', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'getready@example.com',
+      );
+
+      // Create a video and manually set it to ready with a thumbnail_key
+      const channel = await channelRepository.findOneBy({
+        user_id: (
+          await dataSource.query(
+            "SELECT id FROM users WHERE email = 'getready@example.com'",
+          )
+        )[0].id,
+      });
+
+      const video = await videoRepository.save(
+        videoRepository.create({
+          channel_id: channel!.id,
+          title: 'Ready Video',
+          slug: 'ready123',
+          status: VideoStatus.READY,
+          storage_key: 'videos/channel/id/original.mp4',
+          original_filename: 'video.mp4',
+          mime_type: 'video/mp4',
+          file_size_bytes: '104857600',
+          duration_seconds: 123.45,
+          thumbnail_key: 'videos/channel/id/thumbnail.jpg',
+        }),
+      );
+
+      // Mock getPresignedGetUrl
+      const mockPresignedUrl = 'https://s3.example.com/presigned-thumbnail';
+      jest
+        .spyOn(storageService, 'getPresignedGetUrl')
+        .mockResolvedValue(mockPresignedUrl);
+
+      // Fetch video detail
+      const res = await request(app.getHttpServer())
+        .get(`/videos/${video.slug}`)
+        .expect(200);
+
+      expect(res.body.id).toBe(video.id);
+      expect(res.body.status).toBe('ready');
+      expect(res.body.durationSeconds).toBe(123.45);
+      expect(res.body.thumbnailUrl).toBe(mockPresignedUrl);
+    });
+
+    it('returns 200 with null thumbnailUrl for ready video without thumbnail', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'getready-nothumbnail@example.com',
+      );
+
+      // Create a video that is ready but has no thumbnail_key
+      const channel = await channelRepository.findOneBy({
+        user_id: (
+          await dataSource.query(
+            "SELECT id FROM users WHERE email = 'getready-nothumbnail@example.com'",
+          )
+        )[0].id,
+      });
+
+      const video = await videoRepository.save(
+        videoRepository.create({
+          channel_id: channel!.id,
+          title: 'Ready Video No Thumbnail',
+          slug: 'readyno123',
+          status: VideoStatus.READY,
+          storage_key: 'videos/channel/id/original.mp4',
+          original_filename: 'video.mp4',
+          mime_type: 'video/mp4',
+          file_size_bytes: '104857600',
+          duration_seconds: 60.0,
+          thumbnail_key: null,
+        }),
+      );
+
+      // Fetch video detail
+      const res = await request(app.getHttpServer())
+        .get(`/videos/${video.slug}`)
+        .expect(200);
+
+      expect(res.body.id).toBe(video.id);
+      expect(res.body.status).toBe('ready');
+      expect(res.body.thumbnailUrl).toBeNull();
+    });
+
+    it('returns 404 VIDEO_NOT_FOUND for unknown slug', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/videos/nonexistent-slug-xyz')
+        .expect(404);
+
+      expect(res.body.error).toBe('VIDEO_NOT_FOUND');
+    });
+
+    it('is publicly accessible without Authorization header', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'publictest@example.com',
+      );
+
+      // Mock storage
+      jest
+        .spyOn(storageService, 'createMultipartUpload')
+        .mockResolvedValue('upload-id-123');
+      jest
+        .spyOn(storageService, 'getPresignedUploadPartUrls')
+        .mockResolvedValue([
+          { partNumber: 1, url: 'https://s3.example.com/part1' },
+        ] as PresignedPart[]);
+
+      // Initiate upload
+      const initiateRes = await request(app.getHttpServer())
+        .post('/videos')
+        .set('Authorization', `Bearer ${access_token}`)
+        .send({
+          title: 'Public Test Video',
+          originalFilename: 'video.mp4',
+          mimeType: 'video/mp4',
+          fileSizeBytes: 104857600,
+        })
+        .expect(201);
+
+      const videoSlug = initiateRes.body.slug;
+
+      // Fetch without Authorization header (no Bearer token)
+      const res = await request(app.getHttpServer())
+        .get(`/videos/${videoSlug}`)
+        .expect(200);
+
+      expect(res.body.slug).toBe(videoSlug);
+      expect(res.body.title).toBe('Public Test Video');
     });
   });
 });
