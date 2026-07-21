@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
-**Status:** in progress — 6/9 SIs fully complete and review-approved. Resuming sequential dispatch at SI-03.7.
-**SIs:** 6/9 completed (SI-03.1, SI-03.2, SI-03.3, SI-03.4, SI-03.5, SI-03.6)
+**Status:** in progress — 7/9 SIs fully complete and review-approved. Resuming sequential dispatch at SI-03.8.
+**SIs:** 7/9 completed (SI-03.1, SI-03.2, SI-03.3, SI-03.4, SI-03.5, SI-03.6, SI-03.7)
 
 ## Handoff Notes (2026-07-20)
 
@@ -140,7 +140,7 @@ SI-03.5 (`QueueModule` + `POST /videos/:id/complete-upload`) was implemented and
 - **Status:** done (commits `bc18876`..`74a4603`, review clean after 1 fix round — temp-file cleanup on error path)
 
 ### SI-03.7 — Video Detail Endpoint
-- **Status:** pending
+- **Status:** done (commit `88085a8`, base `ef0a37d`, review clean, no fix round)
 
 ### SI-03.8 — Streaming Endpoint (Range Requests)
 - **Status:** pending
