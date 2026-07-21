@@ -32,6 +32,7 @@ issues:
   - id: GIT-1
     status: open
     summary: "Two commits landed directly on main after the dev→main fast-forward merge"
+    mitigated_by: "Task 2 — dev fast-forwarded to main (a970086, 8e4af55 now also on dev, no more divergence); all remediation from a37e122 onward went through feature/phase-03-docs-remediation → dev → main. Historical violation window disclosed above, not erased — status stays open by design (see Strategic Approach)."
   - id: QG-1
     status: open
     summary: "Repo-wide 'npm run lint' fails (260 pre-existing problems); DoD/AC wording has no scoping exception"
@@ -148,7 +149,8 @@ _None open — DOC-1 and DOC-2 resolved, see `## Resolved Issues` below._
 
 ### Git Flow Violations
 
-- **GIT-1** — `git reflog show main` shows `main@{2}: merge dev: Fast-forward` at `cfdfb5a` (the correct Phase 03 landing), followed by two commits authored straight onto `main` with no branch: `a970086` ("docs: update README for Phase 03 completion") and `8e4af55` ("feat: refactor skill from the other challenge and a command approval"). Both bypass `dev` entirely. Explicit choice: (a) leave `main`'s history as-is and disclose the deviation in this doc (chosen — see Strategic Approach); (b) rewrite `main`'s history via rebase + force-push (rejected, destructive, needs separate explicit authorization); (c) going forward, route every further commit — including this document's own — through `feature/* → dev → main` (adopted in Task 2).
+- **GIT-1** — `git reflog show main` shows `main@{2}: merge dev: Fast-forward` at `cfdfb5a` (the correct Phase 03 landing), followed by two commits authored straight onto `main` with no branch: `a970086` ("docs: update README for Phase 03 completion") and `8e4af55` ("feat: refactor skill from the other challenge and a command approval"). Both bypassed `dev` entirely — confirmed as a real fork: `git merge-base --is-ancestor dev main` returned true while `dev` was still at `cfdfb5a`, i.e. `dev` was genuinely 2 commits behind `main`, not just differently-ordered history. Explicit choice: (a) leave `main`'s history as-is and disclose the deviation in this doc (chosen — see Strategic Approach); (b) rewrite `main`'s history via rebase + force-push (rejected, destructive, needs separate explicit authorization); (c) going forward, route every further commit — including this document's own — through `feature/* → dev → main` (adopted in Task 2, see `mitigated_by` in frontmatter).
+  **Mitigation executed:** `dev` was fast-forwarded onto `main` (`git checkout dev && git merge --ff-only main`, `8e4af55..8e4af55` — pure catch-up, no rewrite), eliminating the fork itself, not just papering over it. Then `feature/phase-03-docs-remediation` was branched from the now-reconciled `dev`, DOC-1/DOC-2's fix committed there (`a37e122`), merged back to `dev` (fast-forward), then `dev` merged to `main` (fast-forward). `main`, `dev`, and the feature branch all point at `a37e122` as of this write-up — verified via `git log --oneline -1 main dev feature/phase-03-docs-remediation`. Status stays `open` — the historical direct-to-main window (`cfdfb5a..8e4af55`) is disclosed, not erased.
 
 ### Quality Gate
 
@@ -258,33 +260,34 @@ _None open — DOC-1 and DOC-2 resolved, see `## Resolved Issues` below._
 - Consumes: the staged-but-uncommitted changes from Task 1 (CLAUDE.md edits) and, once decided, Task 3 (DoD wording change, if option (b) is chosen).
 - Produces: a clean `feature/* → dev → main` history for this remediation, matching the pattern `git reflog` already showed working correctly for `feature/phase-03-videos`.
 
-- [ ] **Step 1: Confirm current branch state before branching**
+- [x] **Step 1: Confirm current branch state before branching**
 
-  Run:
+  Ran:
   ```bash
   git status --short
   git branch --show-current
   ```
-  Expected: currently on `main`, with Task 1's edits present as uncommitted changes (or freshly committed if Step 4 of Task 1 was skipped correctly).
+  Result: on `main`, Task 1's edits present as uncommitted changes, as expected.
 
-- [ ] **Step 2: Create a feature branch from `dev`**
+- [x] **Step 2: Create a feature branch from `dev`** _(plan text corrected during execution — see below)_
 
+  **Deviation from the plan as originally written:** the plan assumed `dev` already contained everything on `main`. Checking `git merge-base --is-ancestor dev main` (run fresh at execution time) proved the opposite: `dev` was 2 commits **behind** `main` (`a970086`, `8e4af55` existed only on `main`). Branching straight from stale `dev` would have made Step 4's fast-forward into `main` fail later. Fixed by reconciling first:
   ```bash
   git checkout dev
-  git pull --ff-only
-  git checkout -b feature/phase-03-docs-remediation
+  git merge --ff-only main        # dev catches up to main's 2 extra commits — pure fast-forward, no rewrite
+  git checkout -B feature/phase-03-docs-remediation dev
   ```
-  Expected: new branch created from `dev`'s tip (which per the reflog already contains all of Phase 03's real commits, ending at `cfdfb5a`).
+  Result: `dev` fast-forwarded `8e4af55..8e4af55` cleanly (Updating `cfdfb5a..8e4af55`); feature branch created from the now-reconciled `dev`. This also closes part of GIT-1 for real, not just for this remediation's own commits.
 
-- [ ] **Step 3: Re-apply Task 1's CLAUDE.md edits on this branch and commit**
+- [x] **Step 3: Re-apply Task 1's CLAUDE.md edits on this branch and commit**
 
   ```bash
   git add CLAUDE.md nestjs-project/CLAUDE.md docs/phases/phase-03-videos/acceptance-validation.md
   git commit -m "docs: document Phase 03 video subsystem in CLAUDE.md, add acceptance-criteria audit"
   ```
-  Expected: one commit, non-empty diff limited to the two `CLAUDE.md` files and this audit doc.
+  Result: commit `a37e122`, diff limited to exactly `CLAUDE.md`, `nestjs-project/CLAUDE.md`, and this audit doc (3 files, 389 insertions, 1 deletion) — confirmed via `git diff --cached --stat` before committing.
 
-- [ ] **Step 4: Merge to `dev`, then fast-forward `dev` into `main`**
+- [x] **Step 4: Merge to `dev`, then fast-forward `dev` into `main`**
 
   ```bash
   git checkout dev
@@ -292,11 +295,11 @@ _None open — DOC-1 and DOC-2 resolved, see `## Resolved Issues` below._
   git checkout main
   git merge --ff-only dev
   ```
-  Expected: both merges succeed as fast-forwards (mirrors the exact `main@{2}: merge dev: Fast-forward` pattern already in the reflog for the real Phase 03 landing). If either merge is not fast-forward-able, stop and investigate — do not force it.
+  Result: both fast-forwards succeeded (`Updating 8e4af55..a37e122` on both). Verified via `git log --oneline -1 main dev feature/phase-03-docs-remediation` → all three print `a37e122`. Working tree clean afterward (`git status --short` shows only the pre-existing, unrelated untracked `.idea/`).
 
-- [ ] **Step 5: Record the GIT-1 deviation as closed-going-forward, not erased**
+- [x] **Step 5: Record the GIT-1 deviation as closed-going-forward, not erased**
 
-  No file edit needed — GIT-1 stays `status: open` in this doc's frontmatter (the historical violation on `main` is real and undisclosed rewriting would be worse), but note in a follow-up commit message or PR description that all remediation from this point forward followed Git Flow correctly.
+  Done — see GIT-1's `mitigated_by` frontmatter field and the "Mitigation executed" paragraph under `### Git Flow Violations` above. `status: open` is intentional and permanent for this issue; it cannot become `resolved` because the historical direct-to-main commits genuinely happened.
 
 ---
 
