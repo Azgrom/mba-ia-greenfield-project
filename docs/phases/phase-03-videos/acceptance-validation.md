@@ -3,7 +3,7 @@ kind: acceptance-validation
 name: phase-03-videos
 target: PROJECT_INSTRUCTIONS.md § "Critérios de Aceite" + § "Reprova automática"
 status: dirty
-issue_count: 2
+issue_count: 1
 generated: "2026-07-21T19:29:20-03:00"
 generated_at_commit: 8e4af55
 sources_consulted:
@@ -34,8 +34,9 @@ issues:
     summary: "Two commits landed directly on main after the dev→main fast-forward merge"
     mitigated_by: "Task 2 — dev fast-forwarded to main (a970086, 8e4af55 now also on dev, no more divergence); all remediation from a37e122 onward went through feature/phase-03-docs-remediation → dev → main. Historical violation window disclosed above, not erased — status stays open by design (see Strategic Approach)."
   - id: QG-1
-    status: open
+    status: resolved
     summary: "Repo-wide 'npm run lint' fails (260 pre-existing problems); DoD/AC wording has no scoping exception"
+    resolved_by: "Task 3 Step 3b, commit fdccc8e — DoD rule 4 scoped to changed files; repo-wide cleanup tracked as separate follow-up (not resolved, deliberately out of scope)"
 advisories:
   - id: ADV-1
     status: open
@@ -137,9 +138,9 @@ GIT-1 cannot be "fixed" in the normal sense: `a970086` and `8e4af55` are already
 |---|---|---|
 | Decisões e planejamento | Yes — already satisfied | `technical-decisions-phase-03-videos.md` resolves all 5 TDs; all 5 phase-folder files exist; plan has SIs + all 5 Technical Specs. One advisory only (ADV-1, see below), not a hard gap. |
 | Implementação — feature | Yes — already satisfied | Upload/pre-cadastro/processing/thumbnail/unique-URL/streaming/download/status-cycle all verified against controller routes + entity + worker. |
-| Implementação — infraestrutura e qualidade | Partial | Storage/queue/worker/migration/tests all green per `validation.md`. `npx tsc --noEmit` exits 0. **`npm run lint` (repo-wide) does not exit 0 — QG-1.** Git Flow was respected for the feature itself but violated afterward — **GIT-1**. |
+| Implementação — infraestrutura e qualidade | Yes, with a disclosed exception | Storage/queue/worker/migration/tests all green per `validation.md`. `npx tsc --noEmit` exits 0. `npm run lint` still fails repo-wide (260 problems, unchanged) — **QG-1 resolved** by scoping the DoD wording to changed files rather than fixing the debt (`fdccc8e`); the underlying 260-problem debt itself is still there, just no longer a literal blocker. Git Flow was respected for the feature itself, violated by two later doc commits, and mitigated going forward — **GIT-1 stays open** (see Findings). |
 | Documentação e ferramenta | Yes — DOC-1/DOC-2 fixed | Both `CLAUDE.md` files now cover the video subsystem (see `## Resolved Issues`). **Not yet committed** — still pending Task 2's `feature/* → dev → main` path; until that lands, the working tree satisfies the AC but the last commit on `main` does not. |
-| Reprova automática | At risk on 2 of 8 clauses | "lint quebrado" (QG-1) and "Commit direto na main" (GIT-1) are both literally true today; the other 6 clauses are clear. |
+| Reprova automática | At risk on 1 of 8 clauses | "lint quebrado" (QG-1) is resolved — the DoD wording now scopes lint to the diff, and Phase 03's own touched files pass. "Commit direto na main" (GIT-1) is still literally true historically (`a970086`, `8e4af55`) even though `dev`/`main` are now reconciled and every commit since `a37e122` followed Git Flow correctly; the other 6 clauses are clear. |
 
 ## Findings
 
@@ -154,7 +155,7 @@ _None open — DOC-1 and DOC-2 resolved, see `## Resolved Issues` below._
 
 ### Quality Gate
 
-- **QG-1** — `docs/phases/phase-03-videos/validation.md` (lines documenting the 2026-07-21 remediation) records `npx eslint "{src,apps,libs,test}/**/*.ts"` exiting `1` with 260 pre-existing problems in 14 files outside Phase 03's touched set, human-accepted as pre-existing baseline debt. `PROJECT_INSTRUCTIONS.md`'s "Reprova automática" list states `"tsc com erro, lint quebrado ou suíte vermelha"` with no carve-out for pre-existing/out-of-scope debt, and root `CLAUDE.md`'s Definition of Done says `"Lint passes: npm run lint"` — also unqualified. Explicit choice surfaced to the user in Task 3: (a) fix the 260 pre-existing problems repo-wide; (b) formally amend the DoD wording to state the "no NEW debt" exception the team already applied in practice, then track (a) as separate follow-up work. **Not re-verified live this session** — Docker was not running when this doc was produced (`docker compose ps` returned no containers); the 260 figure is inherited from `validation.md`'s 2026-07-21 entry, not re-executed. Task 3 Step 1 re-runs it for real before any decision is finalized.
+_None open — QG-1 resolved via DoD wording amendment, see `## Resolved Issues` below._
 
 ## Advisories
 
@@ -164,6 +165,7 @@ _None open — DOC-1 and DOC-2 resolved, see `## Resolved Issues` below._
 
 - **DOC-1** _(resolved_by Task 1 Step 1)_ — `nestjs-project/CLAUDE.md` had zero mentions of `video`/`storage`/`queue`/`worker`/`ffmpeg`/`minio`/`bullmq`/`redis`. Fixed: added a `## Video Processing (Phase 03)` section (worker execution model, new Compose services, upload flow, testing conventions). Verified via `grep -c -i "video\|storage\|queue\|worker\|ffmpeg\|minio\|bullmq\|redis" nestjs-project/CLAUDE.md` → `10` (was `0`). Change is currently uncommitted, staged for landing via the `feature/* → dev → main` path in Task 2 — not yet on any branch.
 - **DOC-2** _(resolved_by Task 1 Step 2)_ — root `CLAUDE.md:26` said `**Message Queue** (TBD)`. Fixed: changed to `**Message Queue** (BullMQ/Redis)`. Verified via `grep -n "Message Queue" CLAUDE.md` → shows the corrected line; `grep -rn "TBD" CLAUDE.md docs/project-plan.md nestjs-project/CLAUDE.md` → exit `1` (no matches left). Same uncommitted/pending-Task-2 status as DOC-1.
+- **QG-1** _(resolved_by Task 3 Step 3b, commit `fdccc8e`)_ — root `CLAUDE.md`'s Definition of Done rule 4 said `"Lint passes: npm run lint"` unqualified. Fresh live check confirmed the repo-wide command still fails identically to the 2026-07-21 baseline: `docker compose exec nestjs-api npm run lint` → exit `1`, **260 problems (216 errors, 44 warnings)** across the same 14 files (`grep -E "^/home/node/app/src|^/home/node/app/test"` on the raw output enumerated exactly `auth.service.integration-spec.ts`, `auth.service.spec.ts`, `channels.service.spec.ts`, `channels.service.ts`, `domain-exception.filter.spec.ts`, `validation-exception.filter.spec.ts`, `env.validation.integration-spec.ts`, `mail.service.integration-spec.ts`, `video-queue.service.spec.ts`, `create-test-data-source.ts`, `users.service.integration-spec.ts`, `videos.service.integration-spec.ts`, `videos.service.spec.ts`, `auth.e2e-spec.ts` — nothing drifted since the remediation). User chose (per `AskUserQuestion`, this session): amend the DoD wording rather than fix the debt now. Rule 4 now reads: `"Lint passes on all files touched by the change (npm run lint scoped to the diff). Pre-existing repo-wide lint debt outside the current change's scope is tracked separately, not a blocker — see docs/phases/phase-03-videos/validation.md for the accepted 2026-07-21 baseline."` The 260-problem repo-wide cleanup itself is **not** done — it's explicitly deferred to a separate follow-up task (Task 3 Step 3a's territory), tracked here as still-outstanding technical debt, just no longer a blocker on Phase 03's acceptance.
 
 ---
 
@@ -313,39 +315,30 @@ _None open — DOC-1 and DOC-2 resolved, see `## Resolved Issues` below._
 - Consumes: Docker Compose services from `nestjs-project/compose.yaml` (needs `db`, `redis`, `minio` up for the app to boot enough for lint — actually lint doesn't need runtime services, only `nestjs-api`'s installed `node_modules`; confirm this assumption in Step 1).
 - Produces: an authoritative current lint number (may differ from the 260 recorded 2026-07-21) and a human decision recorded back into this doc's `issues:` frontmatter.
 
-- [ ] **Step 1: Bring up the container and get a real, current lint result**
+- [x] **Step 1: Bring up the container and get a real, current lint result**
 
   ```bash
   cd nestjs-project
   docker compose up -d nestjs-api
   docker compose exec nestjs-api npm run lint
   ```
-  Expected: either exit `0` (QG-1 auto-resolves — record as `resolved` in this doc's frontmatter with the command output as evidence) or a non-zero exit with a problem count. Record the **exact** count and file list — do not reuse the 260 figure from `validation.md` without re-confirming it's still accurate.
+  Result: no containers existed yet at all (`docker compose ps --all` was empty) — `docker compose up -d nestjs-api` created the full network + `db`/`redis`/`minio`/`minio-init`/`mailpit`/`nestjs-api` (dependencies), all healthy. `node_modules` was already present in the container, no install needed. Lint exited `1` with **260 problems (216 errors, 44 warnings)** across exactly the same 14 files as `validation.md`'s 2026-07-21 entry — confirmed identical, not just similar, via direct file-list diff.
 
-- [ ] **Step 2: If still failing, present the two options to the user (do not pick silently)**
+- [x] **Step 2: If still failing, present the two options to the user (do not pick silently)**
 
-  Ask (via `AskUserQuestion` or plain text, whichever fits the session):
-  > QG-1: repo-wide lint still fails with N problems in M files, none touched by Phase 03. Two options: (a) fix them now — real effort, expands scope beyond Phase 03; (b) formally amend the Definition of Done in root `CLAUDE.md` to state the "no NEW debt in touched files" exception the team already applied during the 2026-07-21 remediation, and track (a) as a separate follow-up task. Which do you want?
+  Presented via `AskUserQuestion` with the live numbers (260/216/44, 14 files, none Phase-03-introduced per the targeted-lint precedent). User chose: amend the DoD wording (not fix the debt now, not leave it undecided).
 
 - [ ] **Step 3a: If the user picks (a) — fix the debt**
 
-  This branches into its own task-per-file scope (14 files per `validation.md`'s inventory) and is **out of scope for this document** — write a fresh plan for it (a new `docs/superpowers/plans/<date>-lint-debt-cleanup.md`) rather than folding it in here, since it's unrelated to Phase 03's acceptance criteria once QG-1's DoD-wording question is settled.
+  **Not chosen this session** — user picked 3b instead. Left unstarted; still the correct path if a future session decides to actually clean up the 14 files.
 
-- [ ] **Step 3b: If the user picks (b) — amend the DoD wording**
+- [x] **Step 3b: If the user picks (b) — amend the DoD wording**
 
-  In root `CLAUDE.md`, under `## Definition of Done (Technical)`, change:
-  ```markdown
-  4. Lint passes: `npm run lint`.
-  ```
-  to:
-  ```markdown
-  4. Lint passes on all files touched by the change (`npm run lint` scoped to the diff). Pre-existing repo-wide lint debt outside the current change's scope is tracked separately, not a blocker — see `docs/phases/phase-03-videos/validation.md` for the accepted 2026-07-21 baseline.
-  ```
-  Commit through the same `feature/* → dev → main` path as Task 2 — never directly on `main`.
+  Applied exactly as drafted, committed as `fdccc8e` on `feature/phase-03-docs-remediation` (not directly on `main`), then landed via `feature/* → dev → main` fast-forwards per the Task 2 pattern.
 
-- [ ] **Step 4: Update this document's frontmatter**
+- [x] **Step 4: Update this document's frontmatter**
 
-  Flip `QG-1`'s `status` to `resolved` (citing the chosen option and commit SHA) once Step 2/3 concludes, and recompute `issue_count` / top-level `status` (only `clean` once DOC-1, DOC-2, GIT-1's forward-fix, and QG-1 are all resolved — GIT-1 itself can only ever be annotated "mitigated going forward," never "resolved," since the historical commits remain).
+  `QG-1` flipped to `resolved` with `resolved_by: commit fdccc8e`. `issue_count` recomputed `2 → 1`. Top-level `status` stays `dirty` — and will **permanently** stay `dirty`, by design: `GIT-1` can never reach `resolved` (the historical direct-to-main commits are real and undisclosed rewriting was rejected), so `clean` is not a reachable state for this document. That is the honest outcome, not a bug in the verdict computation.
 
 ---
 
