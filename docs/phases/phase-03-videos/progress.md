@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
-**Status:** PAUSED (explicit user stop request) — 4/9 SIs fully complete and review-approved; SI-03.5 implemented + fix round complete + committed, but re-review has NOT been dispatched yet. Read "SI-03.5 — paused, resume here" below before resuming anything.
-**SIs:** 4/9 completed (SI-03.1, SI-03.2, SI-03.3, SI-03.4); SI-03.5 implemented, reviewed, fix round committed, re-review pending
+**Status:** in progress — 5/9 SIs fully complete and review-approved. Resuming sequential dispatch at SI-03.6.
+**SIs:** 5/9 completed (SI-03.1, SI-03.2, SI-03.3, SI-03.4, SI-03.5)
 
 ## Handoff Notes (2026-07-20)
 
@@ -134,7 +134,7 @@ SI-03.5 (`QueueModule` + `POST /videos/:id/complete-upload`) was implemented and
 - **Status:** done (commits `61c7cde`..`1d09f62`)
 
 ### SI-03.5 — QueueModule and Upload Completion
-- **Status:** implemented + fix round committed (`4a7df38`..`b5c2b45`), re-review PAUSED mid-flight — see Execution log above for exact resume steps
+- **Status:** done (commits `4a7df38`..`b5c2b45`, review clean after 1 fix round; re-review approved 2026-07-21, zero Critical/Important findings)
 
 ### SI-03.6 — Video Worker (Metadata Extraction, Thumbnail, Status Update)
 - **Status:** pending
