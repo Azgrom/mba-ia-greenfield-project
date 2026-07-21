@@ -77,7 +77,7 @@ Run 2026-07-21 (Task 6, final branch verification):
       "src/videos/videos.service.ts" \
       "test/videos.e2e-spec.ts"
   ```
-  This debt was already documented pre-remediation (`docs/phases/phase-03-videos/progress.md`'s 2026-07-20 handoff notes recorded 264 pre-existing repo-wide problems on `dev`, human-scoped as "no NEW debt beyond matching an already-established codebase pattern" — the current 260 count is consistent with that baseline, not a regression). Because the repo-wide command is the required gate and it did not exit `0`, this remains an open blocker per the letter of the Definition of Done, even though no Phase 03 remediation file is implicated.
+  This debt was already documented pre-remediation (`docs/phases/phase-03-videos/progress.md`'s 2026-07-20 handoff notes recorded 264 pre-existing repo-wide problems on `dev`, human-scoped as "no NEW debt beyond matching an already-established codebase pattern" — the current 260 count is consistent with that baseline, not a regression). Human decision (2026-07-21): accepted as pre-existing out-of-scope baseline debt, consistent with the SI-03.4 precedent — Phase 03's own gate is the targeted lint pass above, not the repo-wide command. Full-repo lint cleanup remains a separate out-of-scope follow-up task.
 - Docker services: passed — `docker compose config --services` includes `nestjs-api`, `db`, `mailpit`, `redis`, `minio`, `minio-init`, `video-worker`
 
 ## Known Non-Blocking Follow-Ups
