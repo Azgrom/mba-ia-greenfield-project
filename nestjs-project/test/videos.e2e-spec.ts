@@ -1,0 +1,359 @@
+import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { Test } from '@nestjs/testing';
+import request from 'supertest';
+import type { App } from 'supertest/types';
+import { DataSource, Repository } from 'typeorm';
+import { ThrottlerStorage, ThrottlerStorageService } from '@nestjs/throttler';
+import { AppModule } from '../src/app.module';
+import { AuthService } from '../src/auth/auth.service';
+import { Video } from '../src/videos/entities/video.entity';
+import { Channel } from '../src/channels/entities/channel.entity';
+import { DomainExceptionFilter } from '../src/common/filters/domain-exception.filter';
+import { ValidationExceptionFilter } from '../src/common/filters/validation-exception.filter';
+import { cleanAllTables } from '../src/test/create-test-data-source';
+import { StorageService } from '../src/storage/storage.service';
+import type { PresignedPart } from '../src/storage/storage.service';
+
+describe('Videos (e2e)', () => {
+  let app: INestApplication<App>;
+  let dataSource: DataSource;
+  let videoRepository: Repository<Video>;
+  let channelRepository: Repository<Channel>;
+  let throttlerStorage: ThrottlerStorageService;
+  let storageService: StorageService;
+
+  beforeAll(async () => {
+    const moduleFixture = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+
+    app = moduleFixture.createNestApplication();
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      }),
+    );
+    app.useGlobalFilters(
+      new DomainExceptionFilter(),
+      new ValidationExceptionFilter(),
+    );
+    await app.init();
+
+    dataSource = moduleFixture.get(DataSource);
+    videoRepository = dataSource.getRepository(Video);
+    channelRepository = dataSource.getRepository(Channel);
+    throttlerStorage =
+      moduleFixture.get<ThrottlerStorageService>(ThrottlerStorage);
+    storageService = moduleFixture.get<StorageService>(StorageService);
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  beforeEach(async () => {
+    await cleanAllTables(dataSource);
+    throttlerStorage.storage.clear();
+  });
+
+  async function captureConfirmationToken(
+    email: string,
+    password = 'password123',
+  ): Promise<string> {
+    const authService = app.get(AuthService);
+    const mailServiceInstance = (authService as any).mailService;
+    let capturedToken = '';
+    jest
+      .spyOn(mailServiceInstance, 'sendConfirmationEmail')
+      .mockImplementationOnce(async (_e: string, _n: string, t: string) => {
+        capturedToken = t;
+      });
+    await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({ email, password });
+    return capturedToken;
+  }
+
+  async function registerConfirmAndLogin(
+    email: string,
+    password = 'password123',
+  ): Promise<{ access_token: string; refresh_token: string }> {
+    const token = await captureConfirmationToken(email, password);
+    await request(app.getHttpServer())
+      .get('/auth/confirm-email')
+      .query({ token });
+    const res = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email, password });
+    return {
+      access_token: res.body.access_token,
+      refresh_token: res.body.refresh_token,
+    };
+  }
+
+  describe('POST /videos', () => {
+    it('returns 201 with { id, slug, uploadId, parts } on valid request', async () => {
+      const { access_token } =
+        await registerConfirmAndLogin('upload@example.com');
+
+      // Mock the storage service to avoid actual S3 calls
+      jest
+        .spyOn(storageService, 'createMultipartUpload')
+        .mockResolvedValue('upload-id-123');
+      jest
+        .spyOn(storageService, 'getPresignedUploadPartUrls')
+        .mockResolvedValue([
+          { partNumber: 1, url: 'https://s3.example.com/part1' },
+        ] as PresignedPart[]);
+
+      const res = await request(app.getHttpServer())
+        .post('/videos')
+        .set('Authorization', `Bearer ${access_token}`)
+        .send({
+          title: 'My Test Video',
+          originalFilename: 'video.mp4',
+          mimeType: 'video/mp4',
+          fileSizeBytes: 104857600,
+        })
+        .expect(201);
+
+      expect(res.body.id).toBeDefined();
+      expect(typeof res.body.id).toBe('string');
+      expect(res.body.slug).toBeDefined();
+      expect(typeof res.body.slug).toBe('string');
+      expect(res.body.uploadId).toBe('upload-id-123');
+      expect(Array.isArray(res.body.parts)).toBe(true);
+      expect(res.body.parts.length).toBeGreaterThan(0);
+      expect(res.body.parts[0]).toHaveProperty('partNumber');
+      expect(res.body.parts[0]).toHaveProperty('url');
+
+      // Verify video was persisted to the database
+      const video = await videoRepository.findOneBy({ id: res.body.id });
+      expect(video).not.toBeNull();
+      expect(video!.title).toBe('My Test Video');
+      expect(video!.status).toBe('draft');
+    });
+
+    it('returns 400 with VALIDATION_ERROR when title is missing', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'notitle@example.com',
+      );
+
+      const res = await request(app.getHttpServer())
+        .post('/videos')
+        .set('Authorization', `Bearer ${access_token}`)
+        .send({
+          originalFilename: 'video.mp4',
+          mimeType: 'video/mp4',
+          fileSizeBytes: 104857600,
+        })
+        .expect(400);
+
+      expect(res.body.error).toBe('VALIDATION_ERROR');
+    });
+
+    it('returns 400 with VALIDATION_ERROR when title is empty string', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'emptytitle@example.com',
+      );
+
+      const res = await request(app.getHttpServer())
+        .post('/videos')
+        .set('Authorization', `Bearer ${access_token}`)
+        .send({
+          title: '',
+          originalFilename: 'video.mp4',
+          mimeType: 'video/mp4',
+          fileSizeBytes: 104857600,
+        })
+        .expect(400);
+
+      expect(res.body.error).toBe('VALIDATION_ERROR');
+    });
+
+    it('returns 400 with VALIDATION_ERROR when originalFilename is missing', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'nofilename@example.com',
+      );
+
+      const res = await request(app.getHttpServer())
+        .post('/videos')
+        .set('Authorization', `Bearer ${access_token}`)
+        .send({
+          title: 'My Video',
+          mimeType: 'video/mp4',
+          fileSizeBytes: 104857600,
+        })
+        .expect(400);
+
+      expect(res.body.error).toBe('VALIDATION_ERROR');
+    });
+
+    it('returns 400 with VALIDATION_ERROR when mimeType does not start with "video/"', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'wrongmime@example.com',
+      );
+
+      const res = await request(app.getHttpServer())
+        .post('/videos')
+        .set('Authorization', `Bearer ${access_token}`)
+        .send({
+          title: 'My Video',
+          originalFilename: 'video.mp4',
+          mimeType: 'audio/mp3',
+          fileSizeBytes: 104857600,
+        })
+        .expect(400);
+
+      expect(res.body.error).toBe('VALIDATION_ERROR');
+    });
+
+    it('returns 400 with VALIDATION_ERROR when fileSizeBytes is above 10 GiB', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'toolarge@example.com',
+      );
+
+      const res = await request(app.getHttpServer())
+        .post('/videos')
+        .set('Authorization', `Bearer ${access_token}`)
+        .send({
+          title: 'My Video',
+          originalFilename: 'video.mp4',
+          mimeType: 'video/mp4',
+          fileSizeBytes: 10737418241, // 10 GiB + 1 byte
+        })
+        .expect(400);
+
+      expect(res.body.error).toBe('VALIDATION_ERROR');
+    });
+
+    it('returns 400 with VALIDATION_ERROR when fileSizeBytes is 0', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'zerosize@example.com',
+      );
+
+      const res = await request(app.getHttpServer())
+        .post('/videos')
+        .set('Authorization', `Bearer ${access_token}`)
+        .send({
+          title: 'My Video',
+          originalFilename: 'video.mp4',
+          mimeType: 'video/mp4',
+          fileSizeBytes: 0,
+        })
+        .expect(400);
+
+      expect(res.body.error).toBe('VALIDATION_ERROR');
+    });
+
+    it('returns 401 without an Authorization header', async () => {
+      await request(app.getHttpServer())
+        .post('/videos')
+        .send({
+          title: 'My Video',
+          originalFilename: 'video.mp4',
+          mimeType: 'video/mp4',
+          fileSizeBytes: 104857600,
+        })
+        .expect(401);
+    });
+
+    it('returns 401 with an invalid access token', async () => {
+      await request(app.getHttpServer())
+        .post('/videos')
+        .set('Authorization', 'Bearer invalid-token')
+        .send({
+          title: 'My Video',
+          originalFilename: 'video.mp4',
+          mimeType: 'video/mp4',
+          fileSizeBytes: 104857600,
+        })
+        .expect(401);
+    });
+
+    it('rejects extra fields with forbidNonWhitelisted', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'extrafield@example.com',
+      );
+
+      const res = await request(app.getHttpServer())
+        .post('/videos')
+        .set('Authorization', `Bearer ${access_token}`)
+        .send({
+          title: 'My Video',
+          originalFilename: 'video.mp4',
+          mimeType: 'video/mp4',
+          fileSizeBytes: 104857600,
+          extraField: 'should be rejected',
+        })
+        .expect(400);
+
+      expect(res.body.error).toBe('VALIDATION_ERROR');
+    });
+
+    it('correctly calculates parts.length based on fileSizeBytes', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'multipart@example.com',
+      );
+
+      // 300 MiB with 100 MiB part size = 3 parts
+      const mockParts: PresignedPart[] = [
+        { partNumber: 1, url: 'https://s3.example.com/part1' },
+        { partNumber: 2, url: 'https://s3.example.com/part2' },
+        { partNumber: 3, url: 'https://s3.example.com/part3' },
+      ];
+
+      jest
+        .spyOn(storageService, 'createMultipartUpload')
+        .mockResolvedValue('upload-id-123');
+      jest
+        .spyOn(storageService, 'getPresignedUploadPartUrls')
+        .mockResolvedValue(mockParts);
+
+      const res = await request(app.getHttpServer())
+        .post('/videos')
+        .set('Authorization', `Bearer ${access_token}`)
+        .send({
+          title: 'Large Video',
+          originalFilename: 'video.mp4',
+          mimeType: 'video/mp4',
+          fileSizeBytes: 314572800, // 300 MiB
+        })
+        .expect(201);
+
+      expect(res.body.parts.length).toBe(3);
+    });
+
+    it("creates a draft video in the user's channel", async () => {
+      const { access_token } =
+        await registerConfirmAndLogin('draft@example.com');
+
+      jest
+        .spyOn(storageService, 'createMultipartUpload')
+        .mockResolvedValue('upload-id-123');
+      jest
+        .spyOn(storageService, 'getPresignedUploadPartUrls')
+        .mockResolvedValue([
+          { partNumber: 1, url: 'https://s3.example.com/part1' },
+        ] as PresignedPart[]);
+
+      const res = await request(app.getHttpServer())
+        .post('/videos')
+        .set('Authorization', `Bearer ${access_token}`)
+        .send({
+          title: 'My Draft Video',
+          originalFilename: 'video.mp4',
+          mimeType: 'video/mp4',
+          fileSizeBytes: 104857600,
+        })
+        .expect(201);
+
+      const video = await videoRepository.findOneBy({ id: res.body.id });
+      expect(video).not.toBeNull();
+      expect(video!.status).toBe('draft');
+      expect(video!.title).toBe('My Draft Video');
+    });
+  });
+});
