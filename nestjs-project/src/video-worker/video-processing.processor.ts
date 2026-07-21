@@ -55,56 +55,62 @@ export class VideoProcessingProcessor extends WorkerHost {
       tmpDir,
       `${video.id}${extname(video.storage_key)}`,
     );
-
-    const { body } = await this.storageService.getObjectRange(
-      video.storage_key,
-    );
-    await pipeline(body, createWriteStream(tmpVideoPath));
-
-    const metadata = await new Promise<FfprobeData>((resolve, reject) => {
-      ffmpeg.ffprobe(tmpVideoPath, (err: Error | null, data: FfprobeData) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(data);
-        }
-      });
-    });
-
     const thumbnailFilename = `${video.id}-thumbnail.jpg`;
-    await new Promise<void>((resolve, reject) => {
-      ffmpeg(tmpVideoPath)
-        .on('end', () => resolve())
-        .on('error', (err: Error) => reject(err))
-        .screenshots({
-          timestamps: ['25%'],
-          filename: thumbnailFilename,
-          folder: tmpDir,
+
+    try {
+      const { body } = await this.storageService.getObjectRange(
+        video.storage_key,
+      );
+      await pipeline(body, createWriteStream(tmpVideoPath));
+
+      const metadata = await new Promise<FfprobeData>((resolve, reject) => {
+        ffmpeg.ffprobe(tmpVideoPath, (err: Error | null, data: FfprobeData) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(data);
+          }
         });
-    });
+      });
 
-    const thumbnailBuffer = await fs.readFile(join(tmpDir, thumbnailFilename));
-    const thumbnailKey = `videos/${video.channel_id}/${video.id}/thumbnail.jpg`;
-    await this.storageService.putObject(
-      thumbnailKey,
-      thumbnailBuffer,
-      'image/jpeg',
-    );
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg(tmpVideoPath)
+          .on('end', () => resolve())
+          .on('error', (err: Error) => reject(err))
+          .screenshots({
+            timestamps: ['25%'],
+            filename: thumbnailFilename,
+            folder: tmpDir,
+          });
+      });
 
-    video.status = VideoStatus.READY;
-    video.duration_seconds = metadata.format.duration ?? null;
-    video.thumbnail_key = thumbnailKey;
-    const videoStream = metadata.streams.find((s) => s.codec_type === 'video');
-    video.metadata = {
-      width: videoStream?.width,
-      height: videoStream?.height,
-      codec: videoStream?.codec_name,
-      bitRate: metadata.format.bit_rate,
-    };
-    await this.videoRepository.save(video);
+      const thumbnailBuffer = await fs.readFile(
+        join(tmpDir, thumbnailFilename),
+      );
+      const thumbnailKey = `videos/${video.channel_id}/${video.id}/thumbnail.jpg`;
+      await this.storageService.putObject(
+        thumbnailKey,
+        thumbnailBuffer,
+        'image/jpeg',
+      );
 
-    await fs.rm(tmpVideoPath, { force: true });
-    await fs.rm(join(tmpDir, thumbnailFilename), { force: true });
+      video.status = VideoStatus.READY;
+      video.duration_seconds = metadata.format.duration ?? null;
+      video.thumbnail_key = thumbnailKey;
+      const videoStream = metadata.streams.find(
+        (s) => s.codec_type === 'video',
+      );
+      video.metadata = {
+        width: videoStream?.width,
+        height: videoStream?.height,
+        codec: videoStream?.codec_name,
+        bitRate: metadata.format.bit_rate,
+      };
+      await this.videoRepository.save(video);
+    } finally {
+      await fs.rm(tmpVideoPath, { force: true });
+      await fs.rm(join(tmpDir, thumbnailFilename), { force: true });
+    }
   }
 
   @OnWorkerEvent('failed')
