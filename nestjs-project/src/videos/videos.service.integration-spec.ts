@@ -6,20 +6,27 @@ import {
   createTestDataSource,
 } from '../test/create-test-data-source';
 import storageConfig from '../config/storage.config';
+import queueConfig from '../config/queue.config';
 import { StorageModule } from '../storage/storage.module';
+import { QueueModule } from '../queue/queue.module';
 import { User } from '../users/entities/user.entity';
 import { Channel } from '../channels/entities/channel.entity';
 import { Video, VideoStatus } from './entities/video.entity';
+import { RefreshToken } from '../auth/entities/refresh-token.entity';
+import { VerificationToken } from '../auth/entities/verification-token.entity';
 import { VideosService } from './videos.service';
 import { StorageService } from '../storage/storage.service';
 import { InitiateUploadDto } from './dto/initiate-upload.dto';
+import { CompleteUploadDto } from './dto/complete-upload.dto';
+import { VideoQueueService } from '../queue/video-queue.service';
 
-const ALL_ENTITIES = [User, Channel, Video];
+const ALL_ENTITIES = [User, Channel, Video, RefreshToken, VerificationToken];
 
 describe('VideosService (integration)', () => {
   let dataSource: DataSource;
   let storageTestingModule: TestingModule;
   let storageService: StorageService;
+  let videoQueueService: VideoQueueService;
   let videosService: VideosService;
   let userRepository: Repository<User>;
   let channelRepository: Repository<Channel>;
@@ -33,18 +40,28 @@ describe('VideosService (integration)', () => {
     channelRepository = dataSource.getRepository(Channel);
     videoRepository = dataSource.getRepository(Video);
 
-    // Create a real StorageService instance
+    // Create a real StorageService and QueueService instance
     storageTestingModule = await Test.createTestingModule({
       imports: [
-        ConfigModule.forRoot({ isGlobal: true, load: [storageConfig] }),
+        ConfigModule.forRoot({
+          isGlobal: true,
+          load: [storageConfig, queueConfig],
+        }),
         StorageModule,
+        QueueModule,
       ],
     }).compile();
     storageService = storageTestingModule.get(StorageService);
+    videoQueueService = storageTestingModule.get(VideoQueueService);
 
-    // Create the service with the real repository and real storage service
+    // Create the service with the real repository and real services
     const config = storageConfig();
-    videosService = new VideosService(videoRepository, storageService, config);
+    videosService = new VideosService(
+      videoRepository,
+      storageService,
+      config,
+      videoQueueService,
+    );
   });
 
   afterAll(async () => {
@@ -194,6 +211,66 @@ describe('VideosService (integration)', () => {
         where: { channel_id: channel.id },
       });
       expect(videos.length).toBe(0);
+    });
+  });
+
+  describe('completeUpload', () => {
+    it('completes upload and enqueues processing job', async () => {
+      const { channel } = await createUserWithChannel();
+
+      // Step 1: Initiate upload
+      const initiateDto: InitiateUploadDto = {
+        title: 'Test Video Upload',
+        originalFilename: 'video.mp4',
+        mimeType: 'video/mp4',
+        fileSizeBytes: 104857600, // 100 MiB
+      };
+
+      const initiateResult = await videosService.initiateUpload(
+        channel.id,
+        initiateDto,
+      );
+
+      expect(initiateResult.id).toBeDefined();
+      expect(initiateResult.uploadId).toBeDefined();
+
+      let video = await videoRepository.findOneBy({ id: initiateResult.id });
+      expect(video!.status).toBe(VideoStatus.DRAFT);
+      expect(video!.upload_id).toBe(initiateResult.uploadId);
+
+      // Mock the completeMultipartUpload to avoid needing real S3 parts
+      jest
+        .spyOn(storageService, 'completeMultipartUpload')
+        .mockResolvedValue(undefined);
+
+      // Mock the enqueueProcessing to verify it's called
+      const enqueueSpy = jest
+        .spyOn(videoQueueService, 'enqueueProcessing')
+        .mockResolvedValue(undefined);
+
+      // Step 2: Complete upload
+      const completeDto: CompleteUploadDto = {
+        parts: [{ partNumber: 1, etag: 'etag-abc123' }],
+      };
+
+      const completeResult = await videosService.completeUpload(
+        channel.id,
+        initiateResult.id,
+        completeDto,
+      );
+
+      expect(completeResult.id).toBe(initiateResult.id);
+      expect(completeResult.status).toBe(VideoStatus.PROCESSING);
+      expect(completeResult.upload_id).toBeNull();
+
+      // Step 3: Verify video was updated in DB
+      video = await videoRepository.findOneBy({ id: initiateResult.id });
+      expect(video!.status).toBe(VideoStatus.PROCESSING);
+      expect(video!.upload_id).toBeNull();
+
+      // Step 4: Verify enqueueProcessing was called
+      expect(enqueueSpy).toHaveBeenCalledWith(initiateResult.id);
+      expect(enqueueSpy).toHaveBeenCalledTimes(1);
     });
   });
 

@@ -356,4 +356,253 @@ describe('Videos (e2e)', () => {
       expect(video!.title).toBe('My Draft Video');
     });
   });
+
+  describe('POST /videos/:id/complete-upload', () => {
+    it('returns 200 with { id, slug, status: processing } on valid request', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'complete@example.com',
+      );
+
+      // Mock storage to initiate upload
+      jest
+        .spyOn(storageService, 'createMultipartUpload')
+        .mockResolvedValue('upload-id-123');
+      jest
+        .spyOn(storageService, 'getPresignedUploadPartUrls')
+        .mockResolvedValue([
+          { partNumber: 1, url: 'https://s3.example.com/part1' },
+        ] as PresignedPart[]);
+      jest
+        .spyOn(storageService, 'completeMultipartUpload')
+        .mockResolvedValue(undefined);
+
+      // Initiate upload
+      const initiateRes = await request(app.getHttpServer())
+        .post('/videos')
+        .set('Authorization', `Bearer ${access_token}`)
+        .send({
+          title: 'Test Video for Completion',
+          originalFilename: 'video.mp4',
+          mimeType: 'video/mp4',
+          fileSizeBytes: 104857600,
+        })
+        .expect(201);
+
+      const videoId = initiateRes.body.id;
+
+      // Complete upload
+      const completeRes = await request(app.getHttpServer())
+        .post(`/videos/${videoId}/complete-upload`)
+        .set('Authorization', `Bearer ${access_token}`)
+        .send({
+          parts: [{ partNumber: 1, etag: 'etag-abc123' }],
+        })
+        .expect(200);
+
+      expect(completeRes.body.id).toBe(videoId);
+      expect(completeRes.body.slug).toBeDefined();
+      expect(completeRes.body.status).toBe('processing');
+
+      // Verify in database
+      const video = await videoRepository.findOneBy({ id: videoId });
+      expect(video!.status).toBe('processing');
+      expect(video!.upload_id).toBeNull();
+    });
+
+    it('returns 409 UPLOAD_ALREADY_COMPLETED when called twice on same video', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'doubleupload@example.com',
+      );
+
+      // Mock storage
+      jest
+        .spyOn(storageService, 'createMultipartUpload')
+        .mockResolvedValue('upload-id-123');
+      jest
+        .spyOn(storageService, 'getPresignedUploadPartUrls')
+        .mockResolvedValue([
+          { partNumber: 1, url: 'https://s3.example.com/part1' },
+        ] as PresignedPart[]);
+      jest
+        .spyOn(storageService, 'completeMultipartUpload')
+        .mockResolvedValue(undefined);
+
+      // Initiate upload
+      const initiateRes = await request(app.getHttpServer())
+        .post('/videos')
+        .set('Authorization', `Bearer ${access_token}`)
+        .send({
+          title: 'Video for Double Complete',
+          originalFilename: 'video.mp4',
+          mimeType: 'video/mp4',
+          fileSizeBytes: 104857600,
+        })
+        .expect(201);
+
+      const videoId = initiateRes.body.id;
+
+      // First complete
+      await request(app.getHttpServer())
+        .post(`/videos/${videoId}/complete-upload`)
+        .set('Authorization', `Bearer ${access_token}`)
+        .send({
+          parts: [{ partNumber: 1, etag: 'etag-abc123' }],
+        })
+        .expect(200);
+
+      // Second complete - should return 409
+      const res = await request(app.getHttpServer())
+        .post(`/videos/${videoId}/complete-upload`)
+        .set('Authorization', `Bearer ${access_token}`)
+        .send({
+          parts: [{ partNumber: 1, etag: 'etag-abc123' }],
+        })
+        .expect(409);
+
+      expect(res.body.error).toBe('UPLOAD_ALREADY_COMPLETED');
+    });
+
+    it('returns 404 VIDEO_NOT_FOUND when video does not exist', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'notfound@example.com',
+      );
+
+      // Use a valid UUID that doesn't exist
+      const nonexistentUuid = '00000000-0000-0000-0000-000000000000';
+
+      const res = await request(app.getHttpServer())
+        .post(`/videos/${nonexistentUuid}/complete-upload`)
+        .set('Authorization', `Bearer ${access_token}`)
+        .send({
+          parts: [{ partNumber: 1, etag: 'etag-abc123' }],
+        })
+        .expect(404);
+
+      expect(res.body.error).toBe('VIDEO_NOT_FOUND');
+    });
+
+    it("returns 404 VIDEO_NOT_FOUND when accessing another user's video", async () => {
+      const user1Tokens = await registerConfirmAndLogin('user1@example.com');
+      const user2Tokens = await registerConfirmAndLogin('user2@example.com');
+
+      // Mock storage for user1
+      jest
+        .spyOn(storageService, 'createMultipartUpload')
+        .mockResolvedValue('upload-id-123');
+      jest
+        .spyOn(storageService, 'getPresignedUploadPartUrls')
+        .mockResolvedValue([
+          { partNumber: 1, url: 'https://s3.example.com/part1' },
+        ] as PresignedPart[]);
+
+      // User1 initiates upload
+      const initiateRes = await request(app.getHttpServer())
+        .post('/videos')
+        .set('Authorization', `Bearer ${user1Tokens.access_token}`)
+        .send({
+          title: 'User1 Video',
+          originalFilename: 'video.mp4',
+          mimeType: 'video/mp4',
+          fileSizeBytes: 104857600,
+        })
+        .expect(201);
+
+      const videoId = initiateRes.body.id;
+
+      // User2 tries to complete user1's video - should get 404
+      const res = await request(app.getHttpServer())
+        .post(`/videos/${videoId}/complete-upload`)
+        .set('Authorization', `Bearer ${user2Tokens.access_token}`)
+        .send({
+          parts: [{ partNumber: 1, etag: 'etag-abc123' }],
+        })
+        .expect(404);
+
+      expect(res.body.error).toBe('VIDEO_NOT_FOUND');
+    });
+
+    it('returns 400 VALIDATION_ERROR when parts is missing', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'noparts@example.com',
+      );
+
+      jest
+        .spyOn(storageService, 'createMultipartUpload')
+        .mockResolvedValue('upload-id-123');
+      jest
+        .spyOn(storageService, 'getPresignedUploadPartUrls')
+        .mockResolvedValue([
+          { partNumber: 1, url: 'https://s3.example.com/part1' },
+        ] as PresignedPart[]);
+
+      // Initiate upload
+      const initiateRes = await request(app.getHttpServer())
+        .post('/videos')
+        .set('Authorization', `Bearer ${access_token}`)
+        .send({
+          title: 'No Parts Video',
+          originalFilename: 'video.mp4',
+          mimeType: 'video/mp4',
+          fileSizeBytes: 104857600,
+        })
+        .expect(201);
+
+      const res = await request(app.getHttpServer())
+        .post(`/videos/${initiateRes.body.id}/complete-upload`)
+        .set('Authorization', `Bearer ${access_token}`)
+        .send({})
+        .expect(400);
+
+      expect(res.body.error).toBe('VALIDATION_ERROR');
+    });
+
+    it('returns 400 VALIDATION_ERROR when parts array is empty', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'emptyparts@example.com',
+      );
+
+      jest
+        .spyOn(storageService, 'createMultipartUpload')
+        .mockResolvedValue('upload-id-123');
+      jest
+        .spyOn(storageService, 'getPresignedUploadPartUrls')
+        .mockResolvedValue([
+          { partNumber: 1, url: 'https://s3.example.com/part1' },
+        ] as PresignedPart[]);
+
+      // Initiate upload
+      const initiateRes = await request(app.getHttpServer())
+        .post('/videos')
+        .set('Authorization', `Bearer ${access_token}`)
+        .send({
+          title: 'Empty Parts Video',
+          originalFilename: 'video.mp4',
+          mimeType: 'video/mp4',
+          fileSizeBytes: 104857600,
+        })
+        .expect(201);
+
+      const res = await request(app.getHttpServer())
+        .post(`/videos/${initiateRes.body.id}/complete-upload`)
+        .set('Authorization', `Bearer ${access_token}`)
+        .send({
+          parts: [],
+        })
+        .expect(400);
+
+      expect(res.body.error).toBe('VALIDATION_ERROR');
+    });
+
+    it('returns 401 without Authorization header', async () => {
+      const validUuid = '00000000-0000-0000-0000-000000000000';
+      const res = await request(app.getHttpServer())
+        .post(`/videos/${validUuid}/complete-upload`)
+        .send({
+          parts: [{ partNumber: 1, etag: 'etag-abc123' }],
+        })
+        .expect(401);
+
+      expect(res.body).toBeDefined();
+    });
+  });
 });

@@ -11,8 +11,12 @@ import type {
   InitiateUploadResponseDto,
   PresignedPartDto,
 } from './dto/initiate-upload-response.dto';
+import { CompleteUploadDto } from './dto/complete-upload.dto';
 import { generateSlug } from './slug.util';
 import { VideoNotFoundException } from './exceptions/video-not-found.exception';
+import { UploadAlreadyCompletedException } from './exceptions/upload-already-completed.exception';
+import { MultipartUploadFailedException } from './exceptions/multipart-upload-failed.exception';
+import { VideoQueueService } from '../queue/video-queue.service';
 
 const PG_UNIQUE_VIOLATION = '23505';
 const SLUG_COLUMN = 'slug';
@@ -36,6 +40,7 @@ export class VideosService {
     private readonly storageService: StorageService,
     @Inject(storageConfig.KEY)
     private readonly storage: ConfigType<typeof storageConfig>,
+    private readonly videoQueueService: VideoQueueService,
   ) {}
 
   async initiateUpload(
@@ -112,6 +117,35 @@ export class VideosService {
       await this.videoRepository.delete(video.id);
       throw err;
     }
+  }
+
+  async completeUpload(
+    channelId: string,
+    videoId: string,
+    dto: CompleteUploadDto,
+  ): Promise<Video> {
+    const video = await this.videoRepository.findOneBy({
+      id: videoId,
+      channel_id: channelId,
+    });
+    if (!video) throw new VideoNotFoundException();
+    if (video.status !== VideoStatus.DRAFT) {
+      throw new UploadAlreadyCompletedException();
+    }
+    try {
+      await this.storageService.completeMultipartUpload(
+        video.storage_key,
+        video.upload_id as string,
+        dto.parts,
+      );
+    } catch {
+      throw new MultipartUploadFailedException();
+    }
+    video.status = VideoStatus.PROCESSING;
+    video.upload_id = null;
+    await this.videoRepository.save(video);
+    await this.videoQueueService.enqueueProcessing(video.id);
+    return video;
   }
 
   async findBySlugOrFail(slug: string): Promise<Video> {
