@@ -149,6 +149,28 @@ NestJS with standard module structure. Source lives in `src/`, compiled output i
 - Each domain feature gets its own module (e.g., `UsersModule`, `VideosModule`) registered in `AppModule`
 - Controllers handle HTTP routing; Services hold business logic; both are scoped to their module
 
+## Video Processing (Phase 03)
+
+Upload, storage, async processing, and delivery of videos. Four modules: `videos/` (entity, controller, upload/detail/stream/download endpoints), `storage/` (MinIO/S3 wrapper — multipart upload, presigned URLs, range GET), `queue/` (BullMQ producer — `VideoQueueService`), `video-worker/` (separate process consuming the queue — metadata extraction + thumbnail via fluent-ffmpeg/ffprobe).
+
+### Running the worker
+
+The worker is a **separate Node process**, not part of `nestjs-api`. It runs as its own Compose service (`video-worker`) via `npm run start:worker:dev`. `VIDEO_WORKER_CONCURRENCY` (default BullMQ concurrency is 1) is only honored because `start:worker:dev` preloads `-r dotenv/config` — this loads `.env` before the `@Processor` decorator reads the concurrency option at import time, ahead of `ConfigModule.forRoot()`. If you ever see the worker silently running at concurrency 1 despite `VIDEO_WORKER_CONCURRENCY` being set, check that preload flag first.
+
+### New infra services (`compose.yaml`)
+
+- `redis` — BullMQ backing store, port `6379`.
+- `minio` + `minio-init` — S3-compatible object storage, ports `9000` (API) / `9001` (console), bucket `streamtube` auto-created by `minio-init`.
+- `video-worker` — the background processor described above.
+
+### Upload flow
+
+Direct-to-storage multipart upload (never through the API): `POST /videos` initiates a draft + returns presigned part URLs; the client PUTs parts straight to MinIO; `POST /videos/:id/complete-upload` finalizes the multipart upload and enqueues processing. This is why a 10GB file never touches the NestJS process.
+
+### Testing conventions specific to this subsystem
+
+Per the project's "don't mock what you can run for real" rule: `storage.service.integration-spec.ts`, `video-processing.processor.integration-spec.ts`, and `video-processing.queue.integration-spec.ts` all exercise **real MinIO and real Redis/BullMQ** via the Compose services — never mock `StorageService` or the queue in an integration spec. Unit specs (`*.spec.ts`) still mock these collaborators.
+
 ## Code Conventions
 
 - **TypeScript:** `nodenext` module resolution, `ES2023` target, `strictNullChecks` on, `noImplicitAny` off
