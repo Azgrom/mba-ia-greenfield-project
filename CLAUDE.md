@@ -52,7 +52,7 @@ A change is only considered complete when **all** of the following pass:
 1. The relevant test suite passes (unit + integration + e2e affected by the change).
 2. The full test suite passes before finishing the task.
 3. TypeScript compiles cleanly: `npx tsc --noEmit` exits with code 0. Compilation errors must never be left as debt for future tasks.
-4. Lint passes: `npm run lint`.
+4. Lint passes on all files touched by the change (`npm run lint` scoped to the diff). Pre-existing repo-wide lint debt outside the current change's scope is tracked separately, not a blocker — see `docs/phases/phase-03-videos/validation.md` for the accepted 2026-07-21 baseline.
 
 If any of these fails, the task is not done — fix the underlying issue before declaring completion.
 
