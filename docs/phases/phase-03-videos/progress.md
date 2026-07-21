@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
-**Status:** in progress — 3/9 SIs complete and merged into this branch, SI-03.4 next
-**SIs:** 3/9 completed (SI-03.1, SI-03.2, SI-03.3)
+**Status:** PAUSED (explicit user stop request) — 3/9 SIs fully complete, SI-03.4 implemented+reviewed but its fix round is mid-flight and uncommitted. Read "SI-03.4 fix round — paused mid-flight" below before resuming anything.
+**SIs:** 3/9 completed (SI-03.1, SI-03.2, SI-03.3); SI-03.4 implemented, review found 2 Important findings, fix in progress
 
 ## Handoff Notes (2026-07-20)
 
@@ -66,7 +66,23 @@ SI-03.1 → SI-03.2 → SI-03.3 → SI-03.4 → SI-03.5 → SI-03.6 → SI-03.7 
 - **SI-03.2** (commits `f2dca35`..`52de5f1`): `Video` entity, 4 exception classes, `CreateVideos` migration. Fix round: `slug` had a redundant double-unique (both `@Column({unique:true})` and a separate `@Index({unique:true})`) — removed the explicit `@Index`, regenerated the migration via CLI (old migration file deleted + fresh one generated, not hand-edited, since it had already been executed against the local dev DB — see `.claude/rules/typeorm-migrations.md` immutability rule). **Note:** during this fix, a `migration:revert` command was run against the wrong assumption about DB state and reverted `CreateAuthTokens` instead of `CreateVideos` — recovered via full `docker compose down -v && up -d` + `migration:run` from scratch. If you ever see `refresh_tokens`/`verification_tokens` tables missing unexpectedly, that class of mistake is why; the fix is always the same: fresh volume + `migration:run`, never patch forward from a confused state.
 - **SI-03.3** (commit `ab8aac0`): `StorageService` (multipart lifecycle, range GET, presigned GET, plain PUT) + `StorageModule`, both real-MinIO integration tests. Approved with zero fix round — only Minor polish findings deferred to the final whole-branch review (deprecated `.substr()` in the integration spec, a loose error-type assertion in the abort test, repeated stream-draining boilerplate — see `.superpowers/sdd/progress.md` for exact line numbers, or the review transcript is gone if that file was cleaned — not blocking, low priority).
 
-**In progress / next: SI-03.4** (VideosModule + `POST /videos` upload initiation). Task brief already written: `.superpowers/sdd/task-4-brief.md` (if present — regenerate via `sed -n '583,702p' docs/phases/phase-03-videos/phase-03-videos.md` plus the Global Constraints block, following the same pattern as SI-03.1–03.3's briefs, if the file is gone). **This is the highest-risk SI so far** — its `initiateUpload` slug-retry loop MUST NOT be wrapped in `dataSource.transaction()` (reproduces architecture-audit finding F-002 exactly, see the plan's own explicit callout in the SI-03.4 section and the Global Constraints "Critical, non-negotiable constraint" paragraph in the brief). The first dispatch attempt for this task failed before an agent even launched (`claude-sonnet-5 temporarily unavailable` from the platform's auto-mode safety classifier, an infra hiccup unrelated to this work) — no code was written, nothing to recover, just redispatch the Task tool call for the implementer with the same brief.
+**SI-03.4 status: implemented (commit `113b4b1`), reviewed, fix round PAUSED mid-flight — resume here.**
+
+SI-03.4 (VideosModule + `POST /videos` upload initiation) was implemented and committed at `113b4b1` (base `61c7cde`). The transaction-boundary constraint (the highest-risk part of this SI — must NOT wrap the slug-retry loop in `dataSource.transaction()`, per F-002) was verified correct both by the controller directly (`grep` for `transaction`/`dataSource` in `videos.service.ts` — clean) and independently by the task reviewer. The reviewer found two Important findings, both user-approved to fix:
+
+1. **Slug-collision detection bug (plan-mandated — copied verbatim from the plan's own template code).** `videos.service.ts`'s retry-loop `catch` block checked `err.message.includes('slug')`, but Postgres puts the column name in `.detail`, not `.message` — so a real slug collision (`23505`) never actually retries, it just rethrows, defeating the SI's whole "collision-safe slug" design. The codebase's own established pattern for this exact situation is `src/channels/channels.service.ts:10-18`'s `isPgUniqueViolationOnColumn(err, column)`, which checks `.detail`.
+2. **`videos.service.integration-spec.ts` fully mocks `StorageService`**, contradicting both the brief's Tests table ("Against real DB + MinIO") and this project's own testing rules (`.claude/rules/nestjs-testing.md`, `nestjs-project/CLAUDE.md` Test Type Selection table — `*.integration-spec.ts` requires real external I/O). It should follow the same real-MinIO `Test.createTestingModule()` pattern already established in `src/storage/storage.service.integration-spec.ts`.
+
+**A fix subagent was dispatched and made partial progress before being explicitly stopped by the user** (not a crash — a deliberate "stop the process" instruction mid-session). As of this write-up (verified via `git diff --stat` immediately before writing this):
+
+- **Finding 1 is FULLY DONE, correct, and uncommitted** — two files:
+  - `nestjs-project/src/videos/videos.service.ts`: adds a local `isPgUniqueViolationOnColumn(err, column)` helper matching `channels.service.ts`'s pattern exactly (checks `err.detail`, not `.message`) and uses it in the retry loop's `catch` block.
+  - `nestjs-project/src/videos/videos.service.spec.ts`: both slug-collision unit tests updated to construct realistic `QueryFailedError`-shaped mocks (`.detail = 'Key (slug)=(abc123def) already exists.'`, `.message` set to a realistic constraint-name string with no "slug" substring, `.code = '23505'`) instead of the old fabricated `.message = 'slug unique constraint'` that only worked against the buggy check.
+  - Re-run `git diff --stat` to confirm both are still present before doing anything else — they were not committed.
+- **Finding 2 is NOT started at all** — `videos.service.integration-spec.ts` still fully mocks `StorageService` (confirmed: `grep -c mockStorageService` on that file still returns the original count). No changes made to that file.
+- **Nothing was committed.** `git log` still shows `113b4b1` as HEAD for this SI; both changes above sit uncommitted in the worktree.
+
+**To resume:** re-dispatch a fix subagent (or do it directly) covering Finding 2 only (Finding 1's fix, described above, just needs to be kept as-is and verified with a test run, not redone). A full dispatch prompt for the complete fix (both findings) was already composed once this session — for Finding 2 alone, the core instruction is: rewrite `videos.service.integration-spec.ts` to use `Test.createTestingModule()` with the REAL `StorageModule` (not mocked), following the exact pattern in `src/storage/storage.service.integration-spec.ts`, per the project's own testing rules (`.claude/rules/nestjs-testing.md`, `nestjs-project/CLAUDE.md` Test Type Selection table) and the brief's Tests table ("Against real DB + MinIO"). Steps: (1) verify Finding 1's existing uncommitted changes still pass their own tests, (2) rewrite `videos.service.integration-spec.ts` against real MinIO, (3) run full suite + tsc + lint, (4) commit everything together (Finding 1 + Finding 2 fixes), (5) regenerate the review package (`scripts/review-package 61c7cde <new-head-sha>`) and dispatch a re-review before marking SI-03.4 complete. Only after SI-03.4 is fully approved should SI-03.5 be dispatched.
 
 **Docker state:** containers (`db`, `mailpit`, `minio`, `redis`, `nestjs-api`) should be up and healthy from SI-03.3's verification — `docker compose ps` from `nestjs-project/` to confirm; `docker compose up -d` if not. `.env` (gitignored) already has all vars needed through SI-03.3 (`STORAGE_*`, `REDIS_*`, `VIDEO_*` all present, mailpit remapped to host port `11025`).
 
@@ -98,7 +114,7 @@ SI-03.1 → SI-03.2 → SI-03.3 → SI-03.4 → SI-03.5 → SI-03.6 → SI-03.7 
 - **Status:** done (commit `ab8aac0`)
 
 ### SI-03.4 — VideosModule and Upload Initiation
-- **Status:** in progress — not yet dispatched (see Execution log above)
+- **Status:** implemented + reviewed (commit `113b4b1`), fix round PAUSED mid-flight — see Execution log above for exact resume steps
 
 ### SI-03.5 — QueueModule and Upload Completion
 - **Status:** pending
