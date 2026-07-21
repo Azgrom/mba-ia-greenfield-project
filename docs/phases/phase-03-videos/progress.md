@@ -1,6 +1,6 @@
 # phase-03-videos — Progress
 
-**Status:** REMEDIATION IN PROGRESS. The core Phase 03 upload and processing implementation exists, but post-implementation validation found merge-blocking gaps: migration-suite cleanup race, Phase 03 lint debt, missing real queue-consumption coverage, unwired worker concurrency config, and missing `context.md`/`validation.md` artifacts.
+**Status:** REMEDIATION BLOCKED. See `docs/phases/phase-03-videos/validation.md` for the latest failing command and blocker. Tasks 1-5's fixes are verified working (unit/integration 32/32 suites, 200/200 tests; e2e 4/4 suites, 92/92 tests; `tsc --noEmit` exit 0; all Compose services present including `video-worker`), but the repo-wide `npx eslint "{src,apps,libs,test}/**/*.ts"` gate still exits `1` with 260 pre-existing problems in files outside Phase 03's touched set — pre-existing debt (documented since the 2026-07-20 handoff notes below), not a regression introduced by this remediation, but the gate has not been explicitly relaxed by the team, so status cannot be marked complete per the plan's own conditional logic.
 **SIs:** 9/9 implemented; remediation plan: `docs/superpowers/plans/2026-07-21-phase-03-video-findings-remediation.md`
 
 ## Remediation Findings (2026-07-21)
