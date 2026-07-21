@@ -1,7 +1,23 @@
 # phase-03-videos — Progress
 
-**Status:** all 9 SIs complete and review-approved. Running full-suite verification, then dispatching the final whole-branch review.
+**Status:** COMPLETE. All 9 SIs implemented and review-approved; full suite green; final whole-branch review returned "Ready to merge: Yes" with zero Critical findings. Proceeding to `superpowers:finishing-a-development-branch` for the merge/PR decision.
 **SIs:** 9/9 completed (SI-03.1 through SI-03.9)
+
+## Final Whole-Branch Review (2026-07-21)
+
+Reviewed on `opus`, range `1ee5f4d` (merge-base with `dev`) `..c6cc9c6`. **Verdict: Ready to merge — Yes.** Zero Critical findings. Full suite verified before and after: `npm test -- --runInBand` (31 suites/197 tests), `npm run test:e2e` (4 suites/92 tests), `npx tsc --noEmit` (exit 0), full-repo lint (327 errors/44 warnings after cleanup commit `43f408a` — up from a documented pre-existing baseline of 264 on `dev`, confirmed pattern-consistent with already-established codebase anti-patterns, not new debt).
+
+**Follow-up items filed (not merge blockers):**
+1. No automated test covers the `enqueueProcessing` → BullMQ → worker-consume seam end-to-end — each SI's own tests only cover their slice in isolation.
+2. `completeUpload` can strand a video in `processing` with no recovery path if enqueue retries are exhausted (by design, per SI-03.5's human-decided "fail loudly, don't roll back the unrollable" — but no reconciliation/re-drive mechanism exists yet). The 502 `VIDEO_PROCESSING_ENQUEUE_FAILED` error is also missing from this plan's Error Catalog section — doc is stale on that point.
+3. Two orphaned-MinIO-multipart-upload test cleanups deferred from SI-03.4.
+4. `isPgUniqueViolationOnColumn` duplicated verbatim between `channels.service.ts` and `videos.service.ts` — candidate for `src/common/` extraction.
+5. `queueConfig.videoWorkerConcurrency` is dead config — never wired into the worker's `BullModule.registerQueue()`/`@Processor()`, so the worker always runs at BullMQ's default concurrency of 1 instead of the configured value.
+6. Stream error listener (SI-03.8) doesn't log the underlying error — no production diagnostics for mid-stream failures.
+7. No dedicated regression test for the `Content-Disposition` filename-escaping fix (SI-03.9) itself.
+8. Repeated test boilerplate (raw-SQL channel lookup 4x in `videos.e2e-spec.ts`) — candidate for a test helper.
+
+Full detail and the complete per-SI Minor-finding triage is in `.superpowers/sdd/progress.md` (gitignored SDD ledger) and the final reviewer's transcript.
 
 ## Handoff Notes (2026-07-20)
 
