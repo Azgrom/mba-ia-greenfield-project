@@ -108,7 +108,7 @@ export class VideosService {
         id: video.id,
         slug: video.slug,
         uploadId,
-        parts: parts as PresignedPartDto[],
+        parts,
       };
     } catch (err) {
       // Compensating action: clean up S3 and the draft row if anything failed

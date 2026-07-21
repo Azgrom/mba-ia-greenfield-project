@@ -703,9 +703,7 @@ describe('Videos (e2e)', () => {
     });
 
     it('returns 200 with presigned thumbnailUrl for ready video with thumbnail', async () => {
-      const { access_token } = await registerConfirmAndLogin(
-        'getready@example.com',
-      );
+      await registerConfirmAndLogin('getready@example.com');
 
       // Create a video and manually set it to ready with a thumbnail_key
       const channel = await channelRepository.findOneBy({
@@ -751,9 +749,7 @@ describe('Videos (e2e)', () => {
     });
 
     it('returns 200 with null thumbnailUrl for ready video without thumbnail', async () => {
-      const { access_token } = await registerConfirmAndLogin(
-        'getready-nothumbnail@example.com',
-      );
+      await registerConfirmAndLogin('getready-nothumbnail@example.com');
 
       // Create a video that is ready but has no thumbnail_key
       const channel = await channelRepository.findOneBy({
@@ -843,9 +839,7 @@ describe('Videos (e2e)', () => {
 
     beforeEach(async () => {
       // Create a user and channel
-      const { access_token } = await registerConfirmAndLogin(
-        'downloadtest@example.com',
-      );
+      await registerConfirmAndLogin('downloadtest@example.com');
 
       const channel = await channelRepository.findOneBy({
         user_id: (
@@ -856,7 +850,7 @@ describe('Videos (e2e)', () => {
       });
 
       // Generate a unique storage key
-      downloadVideoStorageKey = `videos/download-test-${Date.now()}-${Math.random().toString(36).substr(2, 9)}.bin`;
+      downloadVideoStorageKey = `videos/download-test-${Date.now()}-${Math.random().toString(36).substring(2, 11)}.bin`;
 
       // Upload a test object to MinIO with some content
       const testVideoContent = Buffer.alloc(1000);
@@ -869,7 +863,7 @@ describe('Videos (e2e)', () => {
 
       // Create a ready video with the storage_key pointing to the real object
       downloadVideoOriginalFilename = 'my-video.mp4';
-      downloadVideoSlug = `dwn${Math.random().toString(36).substr(2, 8)}`;
+      downloadVideoSlug = `dwn${Math.random().toString(36).substring(2, 10)}`;
       const readyVideo = videoRepository.create({
         channel_id: channel!.id,
         title: 'Download Test Video',
@@ -957,7 +951,7 @@ describe('Videos (e2e)', () => {
         )[0].id,
       });
 
-      const draftSlug = `dft${Math.random().toString(36).substr(2, 8)}`;
+      const draftSlug = `dft${Math.random().toString(36).substring(2, 10)}`;
       const draftVideo = videoRepository.create({
         channel_id: channel!.id,
         title: 'Draft Video',
@@ -986,7 +980,7 @@ describe('Videos (e2e)', () => {
         )[0].id,
       });
 
-      const procSlug = `prc${Math.random().toString(36).substr(2, 8)}`;
+      const procSlug = `prc${Math.random().toString(36).substring(2, 10)}`;
       const procVideo = videoRepository.create({
         channel_id: channel!.id,
         title: 'Processing Video',
@@ -1015,7 +1009,7 @@ describe('Videos (e2e)', () => {
         )[0].id,
       });
 
-      const errSlug = `err${Math.random().toString(36).substr(2, 8)}`;
+      const errSlug = `err${Math.random().toString(36).substring(2, 10)}`;
       const errVideo = videoRepository.create({
         channel_id: channel!.id,
         title: 'Error Video',
@@ -1050,9 +1044,7 @@ describe('Videos (e2e)', () => {
 
     beforeEach(async () => {
       // Create a user and channel
-      const { access_token } = await registerConfirmAndLogin(
-        'streamtest@example.com',
-      );
+      await registerConfirmAndLogin('streamtest@example.com');
 
       const channel = await channelRepository.findOneBy({
         user_id: (
@@ -1063,7 +1055,7 @@ describe('Videos (e2e)', () => {
       });
 
       // Generate a unique storage key
-      readyVideoStorageKey = `videos/stream-test-${Date.now()}-${Math.random().toString(36).substr(2, 9)}.bin`;
+      readyVideoStorageKey = `videos/stream-test-${Date.now()}-${Math.random().toString(36).substring(2, 11)}.bin`;
 
       // Upload a test object to MinIO with 2000 bytes of content
       const testVideoContent = Buffer.alloc(2000);
@@ -1076,7 +1068,7 @@ describe('Videos (e2e)', () => {
 
       // Create a ready video with the storage_key pointing to the real object
       // Slug must be 11 characters or less
-      readyVideoSlug = `ready${Math.random().toString(36).substr(2, 5)}`;
+      readyVideoSlug = `ready${Math.random().toString(36).substring(2, 7)}`;
       const readyVideo = videoRepository.create({
         channel_id: channel!.id,
         title: 'Stream Test Video',
@@ -1144,7 +1136,7 @@ describe('Videos (e2e)', () => {
         )[0].id,
       });
 
-      const draftSlug = `draft${Math.random().toString(36).substr(2, 5)}`;
+      const draftSlug = `draft${Math.random().toString(36).substring(2, 7)}`;
       const draftVideo = videoRepository.create({
         channel_id: channel!.id,
         title: 'Draft Video',
@@ -1173,7 +1165,7 @@ describe('Videos (e2e)', () => {
         )[0].id,
       });
 
-      const processingSlug = `proc${Math.random().toString(36).substr(2, 6)}`;
+      const processingSlug = `proc${Math.random().toString(36).substring(2, 8)}`;
       const processingVideo = videoRepository.create({
         channel_id: channel!.id,
         title: 'Processing Video',
@@ -1202,7 +1194,7 @@ describe('Videos (e2e)', () => {
         )[0].id,
       });
 
-      const errorSlug = `error${Math.random().toString(36).substr(2, 5)}`;
+      const errorSlug = `error${Math.random().toString(36).substring(2, 7)}`;
       const errorVideo = videoRepository.create({
         channel_id: channel!.id,
         title: 'Error Video',

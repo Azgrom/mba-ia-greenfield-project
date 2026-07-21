@@ -91,7 +91,7 @@ describe('StorageService (integration)', () => {
     let testKey: string;
 
     beforeEach(async () => {
-      testKey = `test-range-${Date.now()}-${Math.random().toString(36).substr(2, 9)}.bin`;
+      testKey = `test-range-${Date.now()}-${Math.random().toString(36).substring(2, 11)}.bin`;
       // Upload a test file to use for range tests
       const testData = Buffer.from('0123456789'.repeat(20)); // 200 bytes
       await storageService.putObject(
@@ -154,7 +154,7 @@ describe('StorageService (integration)', () => {
     let testKey: string;
 
     beforeEach(async () => {
-      testKey = `test-presigned-get-${Date.now()}-${Math.random().toString(36).substr(2, 9)}.bin`;
+      testKey = `test-presigned-get-${Date.now()}-${Math.random().toString(36).substring(2, 11)}.bin`;
       // Upload a test file
       const testData = Buffer.from('Test content for presigned GET');
       await storageService.putObject(
@@ -239,7 +239,7 @@ describe('StorageService (integration)', () => {
     let testKey: string;
 
     beforeEach(() => {
-      testKey = `test-put-${Date.now()}-${Math.random().toString(36).substr(2, 9)}.bin`;
+      testKey = `test-put-${Date.now()}-${Math.random().toString(36).substring(2, 11)}.bin`;
     });
 
     it('should upload an object directly via PUT', async () => {
