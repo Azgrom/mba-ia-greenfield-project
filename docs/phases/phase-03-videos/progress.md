@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
-**Status:** in progress — 4/9 SIs fully complete and review-approved; SI-03.5 next.
-**SIs:** 4/9 completed (SI-03.1, SI-03.2, SI-03.3, SI-03.4)
+**Status:** PAUSED (explicit user stop request) — 4/9 SIs fully complete and review-approved; SI-03.5 implemented + fix round complete + committed, but re-review has NOT been dispatched yet. Read "SI-03.5 — paused, resume here" below before resuming anything.
+**SIs:** 4/9 completed (SI-03.1, SI-03.2, SI-03.3, SI-03.4); SI-03.5 implemented, reviewed, fix round committed, re-review pending
 
 ## Handoff Notes (2026-07-20)
 
@@ -77,7 +77,31 @@ Both fixes landed in commit `1d09f62`. Re-review confirmed both are technically 
 
 **Unrelated baseline bug found and fixed during this SI's verification pass** (commit `5a4bf98`, separate from the SI-03.4 fixes above): `package.json`'s `test:e2e` script was missing `--runInBand`. Without it, Jest ran the (now 4, previously 1-2) e2e spec files in parallel workers against the same live Postgres DB, racing DELETE/INSERT across suites and intermittently tripping FK violations in `cleanAllTables` — only started manifesting once SI-03.4 added a second e2e file (`videos.e2e-spec.ts`) alongside `auth.e2e-spec.ts`. Root-caused via systematic debugging (reproduced identically with SI-03.4's fixes stashed out, confirming it wasn't caused by this work); fixed and verified 64/64 e2e tests pass consistently.
 
-**Docker state:** containers (`db`, `mailpit`, `minio`, `redis`, `nestjs-api`) up and healthy. `.env` (gitignored) has all vars needed through SI-03.4.
+**SI-03.5 — implemented (commit `a4966ba`, base `4a7df38`), reviewed, fix round committed (`b5c2b45`) — PAUSED before re-review, resume here.**
+
+SI-03.5 (`QueueModule` + `POST /videos/:id/complete-upload`) was implemented and committed at `a4966ba`. The task reviewer found 1 Critical + 2 Important findings:
+
+1. **Critical: `videos.service.integration-spec.ts`'s `completeUpload` test mocked away the exact two collaborators it existed to verify** — `jest.spyOn(storageService, 'completeMultipartUpload').mockResolvedValue(undefined)` and the same for `videoQueueService.enqueueProcessing`, so no real MinIO completion and no real Redis job ever happened, and the brief's own acceptance criterion ("job visible in the video-processing Redis queue via `queue.getJobCounts()`") was never actually checked anywhere.
+2. **Important (plan-mandated code — copied verbatim from the brief's own template): `completeUpload` had no handling if `enqueueProcessing` failed** after the video was already saved as `processing` — no compensation, no visible failure, just an unhandled rejection propagating up, with no way to retry via the API since the video was no longer `draft`. Confirmed via context7 lookup against the AWS SDK v3 docs that `CompleteMultipartUpload` is not documented as safely re-callable after a successful completion, so rolling back to `draft` and letting the client retry the whole flow isn't a safe option — the compensating action has to be at the enqueue step itself, not by undoing the S3 completion.
+3. A third Important finding (never asserting the "3 attempts + exponential backoff" acceptance criterion) is resolved as a side effect of fixing #1.
+
+**Human decision on #2 (asked because it's plan-mandated, not an implementer bug — same reasoning as SI-03.4's F-001/F-002 pattern):** fix it now, don't defer. Chosen fix: `VideoQueueService.enqueueProcessing` gets a bounded retry (3 attempts, 500ms delay) for transient Redis blips; if still failing, `completeUpload` catches it and throws a new `VideoProcessingEnqueueFailedException` (502) so the failure is loud, not silent. The video legitimately stays `processing` (S3-side completion is final and correct) — this is a "fail loudly, don't roll back the unrollable" design, not a queue-backed reconciliation system (out of scope for this SI).
+
+**A fix subagent addressed both findings and it is FULLY DONE, verified, and committed** at `b5c2b45` (base `a4966ba`):
+- `videos.service.integration-spec.ts`'s `completeUpload` test rewritten: real PUT of 6MB part data to the presigned URL, real ETag captured from the response header, real `completeMultipartUpload` call (no mock), real `Queue` instance fetched via `getQueueToken(VIDEO_PROCESSING_QUEUE)` from `@nestjs/bullmq`, asserts a real job landed with `attempts: 3` and `backoff: { type: 'exponential', delay: 5000 }`, cleans up the test job via `job.remove()` afterward.
+- `video-queue.service.ts`: bounded retry added (3 attempts, 500ms), new `video-queue.service.spec.ts` unit-tests the retry/exhaustion behavior directly.
+- `videos.service.ts` + new `video-processing-enqueue-failed.exception.ts` (502) + `videos.controller.ts`'s Swagger docs updated to document the new 502 response.
+- Independently re-verified by the controller (not just trusting the fix subagent's report, per this session's established practice): 189/189 unit+integration, 71/71 e2e, tsc clean, no new lint debt.
+
+**What is NOT done yet — this is the actual resume point:** the fix commit `b5c2b45` has **not been re-reviewed**. Per `superpowers:subagent-driven-development`, a fix round always needs a re-review before the task is marked complete — do not skip straight to SI-03.6.
+
+**To resume:**
+1. Generate the review package: from this worktree, run the `subagent-driven-development` skill's `scripts/review-package a4966ba b5c2b45` (or `4a7df38 b5c2b45` for the whole-SI diff including the original implementation — prefer the whole-SI range since the original review already covered `a4966ba` once and a re-review conventionally re-reads the full task diff, not just the delta; see this skill's own guidance on re-review scope).
+2. Dispatch a task-reviewer subagent (model: `sonnet` or equivalent — this SI involved judgment-heavy test-infrastructure changes, not a mechanical fix) using `.superpowers/sdd/task-5-brief.md` as the brief, `.superpowers/sdd/task-5-report.md` + `.superpowers/sdd/tmp/si-03.5-fix-report.md` as the implementer/fixer reports, and the generated diff file. Carry forward the same lint-debt scoping note used in SI-03.4/03.5's first review (264 pre-existing repo-wide problems, not this task's concern).
+3. If clean: mark SI-03.5 complete in both `.superpowers/sdd/progress.md` and this file (mirroring how SI-03.4's completion was recorded above), then proceed to SI-03.6 per the Dispatch order.
+4. If the re-review finds anything: same fix-loop process as before — Critical/Important get fixed and re-reviewed again; anything plan-mandated goes back to the human for a decision before deviating.
+
+**Docker state:** containers (`db`, `mailpit`, `minio`, `redis`, `nestjs-api`) up and healthy. `.env` (gitignored) has all vars needed through SI-03.5.
 
 **Bash timeout hook:** this session also added a project-wide 5-minute `timeout` wrapper on all Bash commands via `.claude/settings.json`'s `PreToolUse`/`Bash` hook (committed, unrelated to phase-03 but affects command execution in this repo going forward — background/already-`timeout`-wrapped commands are skipped).
 
@@ -110,7 +134,7 @@ Both fixes landed in commit `1d09f62`. Re-review confirmed both are technically 
 - **Status:** done (commits `61c7cde`..`1d09f62`)
 
 ### SI-03.5 — QueueModule and Upload Completion
-- **Status:** pending
+- **Status:** implemented + fix round committed (`4a7df38`..`b5c2b45`), re-review PAUSED mid-flight — see Execution log above for exact resume steps
 
 ### SI-03.6 — Video Worker (Metadata Extraction, Thumbnail, Status Update)
 - **Status:** pending
