@@ -2,15 +2,18 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   NotFoundException,
   Param,
   ParseUUIDPipe,
   Post,
+  Res,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import type { Response } from 'express';
 import {
   ApiBearerAuth,
   ApiOperation,
@@ -28,6 +31,8 @@ import { InitiateUploadDto } from './dto/initiate-upload.dto';
 import { InitiateUploadResponseDto } from './dto/initiate-upload-response.dto';
 import { CompleteUploadDto } from './dto/complete-upload.dto';
 import { VideoDetailDto } from './dto/video-detail.dto';
+import { VideoStatus } from './entities/video.entity';
+import { VideoNotReadyException } from './exceptions/video-not-ready.exception';
 import { StorageService } from '../storage/storage.service';
 
 @ApiTags('videos')
@@ -176,5 +181,59 @@ export class VideosController {
   async getVideoBySlug(@Param('slug') slug: string): Promise<VideoDetailDto> {
     const video = await this.videosService.findBySlugOrFail(slug);
     return VideoDetailDto.fromEntity(video, this.storageService);
+  }
+
+  @Get(':slug/stream')
+  @Public()
+  @ApiOperation({
+    summary: 'Stream video file with range support',
+    description:
+      'Proxies the video file from storage with HTTP 206 Partial Content support for range requests.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Video stream (full content)',
+    schema: {
+      type: 'string',
+      format: 'binary',
+    },
+  })
+  @ApiResponse({
+    status: 206,
+    description: 'Video stream (partial content)',
+    schema: {
+      type: 'string',
+      format: 'binary',
+    },
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Video not found',
+    schema: { $ref: getSchemaPath(ApiErrorEnvelope) },
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'Video is not ready for streaming',
+    schema: { $ref: getSchemaPath(ApiErrorEnvelope) },
+  })
+  async stream(
+    @Param('slug') slug: string,
+    @Headers('range') range: string | undefined,
+    @Res() res: Response,
+  ): Promise<void> {
+    const video = await this.videosService.findBySlugOrFail(slug);
+    if (video.status !== VideoStatus.READY) {
+      throw new VideoNotReadyException();
+    }
+    const { body, contentLength, contentRange, statusCode } =
+      await this.storageService.getObjectRange(video.storage_key, range);
+    res.status(statusCode);
+    res.set({
+      'Accept-Ranges': 'bytes',
+      'Content-Type': video.mime_type,
+      'Content-Length': String(contentLength),
+      ...(contentRange && { 'Content-Range': contentRange }),
+    });
+    body.pipe(res);
   }
 }
