@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
-**Status:** in progress — 8/9 SIs fully complete and review-approved. Resuming sequential dispatch at SI-03.9, the final SI.
-**SIs:** 8/9 completed (SI-03.1, SI-03.2, SI-03.3, SI-03.4, SI-03.5, SI-03.6, SI-03.7, SI-03.8)
+**Status:** all 9 SIs complete and review-approved. Running full-suite verification, then dispatching the final whole-branch review.
+**SIs:** 9/9 completed (SI-03.1 through SI-03.9)
 
 ## Handoff Notes (2026-07-20)
 
@@ -146,4 +146,4 @@ SI-03.5 (`QueueModule` + `POST /videos/:id/complete-upload`) was implemented and
 - **Status:** done (commits `246bf9f`..`5579e9d`, review clean after 1 fix round — unhandled stream-error listener)
 
 ### SI-03.9 — Download Endpoint
-- **Status:** pending
+- **Status:** done (commits `8c4dc7a`..`3c4eb30`, review clean after 1 fix round — missing real-MinIO test + Content-Disposition filename escaping)
