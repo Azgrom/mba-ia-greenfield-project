@@ -7,10 +7,7 @@ import storageConfig from '../config/storage.config';
 import { Video, VideoStatus } from './entities/video.entity';
 import { StorageService } from '../storage/storage.service';
 import { InitiateUploadDto } from './dto/initiate-upload.dto';
-import type {
-  InitiateUploadResponseDto,
-  PresignedPartDto,
-} from './dto/initiate-upload-response.dto';
+import type { InitiateUploadResponseDto } from './dto/initiate-upload-response.dto';
 import { CompleteUploadDto } from './dto/complete-upload.dto';
 import { generateSlug } from './slug.util';
 import { VideoNotFoundException } from './exceptions/video-not-found.exception';
@@ -23,13 +20,21 @@ const PG_UNIQUE_VIOLATION = '23505';
 const SLUG_COLUMN = 'slug';
 const MAX_SLUG_RETRIES = 5;
 
+type PgDriverError = {
+  code?: unknown;
+  detail?: unknown;
+};
+
 function isPgUniqueViolationOnColumn(err: unknown, column: string): boolean {
   if (!(err instanceof QueryFailedError)) return false;
-  const e = err as any;
+  // TypeORM's QueryFailedError constructor copies the driver error's own
+  // properties (code, detail, ...) onto the QueryFailedError instance itself,
+  // so they are read from `err` directly rather than `err.driverError`.
+  const pgError = err as unknown as PgDriverError;
   return (
-    e.code === PG_UNIQUE_VIOLATION &&
-    typeof e.detail === 'string' &&
-    e.detail.includes(column)
+    pgError.code === PG_UNIQUE_VIOLATION &&
+    typeof pgError.detail === 'string' &&
+    pgError.detail.includes(column)
   );
 }
 
