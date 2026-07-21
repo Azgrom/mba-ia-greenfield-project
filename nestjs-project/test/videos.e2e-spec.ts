@@ -733,7 +733,7 @@ describe('Videos (e2e)', () => {
 
       // Mock getPresignedGetUrl
       const mockPresignedUrl = 'https://s3.example.com/presigned-thumbnail';
-      jest
+      const getPresignedGetUrlSpy = jest
         .spyOn(storageService, 'getPresignedGetUrl')
         .mockResolvedValue(mockPresignedUrl);
 
@@ -746,6 +746,8 @@ describe('Videos (e2e)', () => {
       expect(res.body.status).toBe('ready');
       expect(res.body.durationSeconds).toBe(123.45);
       expect(res.body.thumbnailUrl).toBe(mockPresignedUrl);
+
+      getPresignedGetUrlSpy.mockRestore();
     });
 
     it('returns 200 with null thumbnailUrl for ready video without thumbnail', async () => {
@@ -892,6 +894,26 @@ describe('Videos (e2e)', () => {
       expect(res.headers.location).toBeDefined();
       expect(typeof res.headers.location).toBe('string');
       expect(res.headers.location).toMatch(/^https?:\/\//);
+    });
+
+    it('fetches presigned URL and confirms Content-Disposition header has correct filename', async () => {
+      // Arrange: Get the redirect response
+      const redirectRes = await request(app.getHttpServer())
+        .get(`/videos/${downloadVideoSlug}/download`)
+        .expect(302);
+
+      const presignedUrl = redirectRes.headers.location;
+      expect(presignedUrl).toBeDefined();
+
+      // Act: Fetch the presigned URL
+      const downloadRes = await fetch(presignedUrl);
+      expect(downloadRes.status).toBe(200);
+
+      // Assert: Verify Content-Disposition header
+      const contentDisposition = downloadRes.headers.get('content-disposition');
+      expect(contentDisposition).toBe(
+        `attachment; filename="${downloadVideoOriginalFilename}"`,
+      );
     });
 
     it('presigned URL is passed to getPresignedGetUrl with correct Content-Disposition parameter', async () => {

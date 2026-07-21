@@ -273,9 +273,10 @@ export class VideosController {
     if (video.status !== VideoStatus.READY) {
       throw new VideoNotReadyException();
     }
+    const escapedFilename = video.original_filename.replace(/[\\"]/g, '\\$&');
     const url = await this.storageService.getPresignedGetUrl(
       video.storage_key,
-      `attachment; filename="${video.original_filename}"`,
+      `attachment; filename="${escapedFilename}"`,
     );
     res.redirect(302, url);
   }
