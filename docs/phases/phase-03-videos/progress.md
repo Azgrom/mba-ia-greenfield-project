@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
-**Status:** not started (planning complete, implementation pending)
-**SIs:** 0/9 completed
+**Status:** in progress — 3/9 SIs complete and merged into this branch, SI-03.4 next
+**SIs:** 3/9 completed (SI-03.1, SI-03.2, SI-03.3)
 
 ## Handoff Notes (2026-07-20)
 
@@ -55,6 +55,23 @@ SI-03.1 → SI-03.2 → SI-03.3 → SI-03.4 → SI-03.5 → SI-03.6 → SI-03.7 
 - SI-03.4's slug-collision retry loop must stay as independent, unwrapped `save()` calls (see the plan's "Tech-debt dependency (refactor-arch F-001, F-002)" callout) — do not "clean up" by wrapping it in a single transaction without adding `SAVEPOINT`s.
 - `library-refs.md` must actually get written during SI-03.1 with context7-confirmed versions, not skipped because the plan already names the packages.
 
+### Execution log (2026-07-20, continued) — resume point for a fresh session
+
+**Working directory for all execution:** `.worktrees/feature-phase-03-videos/` (this worktree). `git log --oneline` on branch `feature/phase-03-videos` is the ground truth for what's actually landed — read it before trusting prose below. As of this write-up, HEAD is `ab8aac0` (SI-03.3's commit); SI-03.4 has not landed any commit yet.
+
+**SDD machine ledger:** `.superpowers/sdd/progress.md` (gitignored, worktree-local scratch — not in git history) has the per-task base/head SHAs and review status. If that file is missing (e.g. `git clean -fdx` was run, or a fresh worktree), reconstruct from `git log --oneline feature/phase-03-videos` — commit subjects are tagged with `SI-03.N` / `feat(videos):` / `fix(videos):` prefixes.
+
+**Completed and review-approved (each went through implementer → task-reviewer → fix round → re-review):**
+- **SI-03.1** (commits `422bd03`..`b776842`): deps, storage/queue config, MinIO+Redis compose services, TD doc, library-refs.md. Fix round: TD-03's "Rejected alternative" paragraph was dropped in transcription — restored verbatim.
+- **SI-03.2** (commits `f2dca35`..`52de5f1`): `Video` entity, 4 exception classes, `CreateVideos` migration. Fix round: `slug` had a redundant double-unique (both `@Column({unique:true})` and a separate `@Index({unique:true})`) — removed the explicit `@Index`, regenerated the migration via CLI (old migration file deleted + fresh one generated, not hand-edited, since it had already been executed against the local dev DB — see `.claude/rules/typeorm-migrations.md` immutability rule). **Note:** during this fix, a `migration:revert` command was run against the wrong assumption about DB state and reverted `CreateAuthTokens` instead of `CreateVideos` — recovered via full `docker compose down -v && up -d` + `migration:run` from scratch. If you ever see `refresh_tokens`/`verification_tokens` tables missing unexpectedly, that class of mistake is why; the fix is always the same: fresh volume + `migration:run`, never patch forward from a confused state.
+- **SI-03.3** (commit `ab8aac0`): `StorageService` (multipart lifecycle, range GET, presigned GET, plain PUT) + `StorageModule`, both real-MinIO integration tests. Approved with zero fix round — only Minor polish findings deferred to the final whole-branch review (deprecated `.substr()` in the integration spec, a loose error-type assertion in the abort test, repeated stream-draining boilerplate — see `.superpowers/sdd/progress.md` for exact line numbers, or the review transcript is gone if that file was cleaned — not blocking, low priority).
+
+**In progress / next: SI-03.4** (VideosModule + `POST /videos` upload initiation). Task brief already written: `.superpowers/sdd/task-4-brief.md` (if present — regenerate via `sed -n '583,702p' docs/phases/phase-03-videos/phase-03-videos.md` plus the Global Constraints block, following the same pattern as SI-03.1–03.3's briefs, if the file is gone). **This is the highest-risk SI so far** — its `initiateUpload` slug-retry loop MUST NOT be wrapped in `dataSource.transaction()` (reproduces architecture-audit finding F-002 exactly, see the plan's own explicit callout in the SI-03.4 section and the Global Constraints "Critical, non-negotiable constraint" paragraph in the brief). The first dispatch attempt for this task failed before an agent even launched (`claude-sonnet-5 temporarily unavailable` from the platform's auto-mode safety classifier, an infra hiccup unrelated to this work) — no code was written, nothing to recover, just redispatch the Task tool call for the implementer with the same brief.
+
+**Docker state:** containers (`db`, `mailpit`, `minio`, `redis`, `nestjs-api`) should be up and healthy from SI-03.3's verification — `docker compose ps` from `nestjs-project/` to confirm; `docker compose up -d` if not. `.env` (gitignored) already has all vars needed through SI-03.3 (`STORAGE_*`, `REDIS_*`, `VIDEO_*` all present, mailpit remapped to host port `11025`).
+
+**Bash timeout hook:** this session also added a project-wide 5-minute `timeout` wrapper on all Bash commands via `.claude/settings.json`'s `PreToolUse`/`Bash` hook (committed, unrelated to phase-03 but affects command execution in this repo going forward — background/already-`timeout`-wrapped commands are skipped).
+
 ### Artifact map
 
 | Artifact | Path | Status |
@@ -72,16 +89,16 @@ SI-03.1 → SI-03.2 → SI-03.3 → SI-03.4 → SI-03.5 → SI-03.6 → SI-03.7 
 ## Step Implementations
 
 ### SI-03.1 — Dependencies, Config Namespaces, and Docker Compose Infra (MinIO + Redis)
-- **Status:** pending
+- **Status:** done (commits `422bd03`..`b776842`)
 
 ### SI-03.2 — Video Entity, Domain Exceptions, and Migration
-- **Status:** pending
+- **Status:** done (commits `f2dca35`..`52de5f1`)
 
 ### SI-03.3 — StorageService (MinIO/S3 Wrapper)
-- **Status:** pending
+- **Status:** done (commit `ab8aac0`)
 
 ### SI-03.4 — VideosModule and Upload Initiation
-- **Status:** pending
+- **Status:** in progress — not yet dispatched (see Execution log above)
 
 ### SI-03.5 — QueueModule and Upload Completion
 - **Status:** pending
