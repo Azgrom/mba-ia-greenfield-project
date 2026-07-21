@@ -322,7 +322,9 @@ describe('VideosService', () => {
           // First 2 saves fail with slug collision
           const err = Object.create(QueryFailedError.prototype);
           err.code = '23505';
-          err.message = 'slug unique constraint';
+          err.message =
+            'duplicate key value violates unique constraint "UQ_5dbcc1ee100f853490582eccc71"';
+          err.detail = 'Key (slug)=(abc123def) already exists.';
           throw err;
         }
         // Third save succeeds
@@ -379,7 +381,9 @@ describe('VideosService', () => {
         // Always fail with slug collision
         const err = Object.create(QueryFailedError.prototype);
         err.code = '23505';
-        err.message = 'slug unique constraint';
+        err.message =
+          'duplicate key value violates unique constraint "UQ_5dbcc1ee100f853490582eccc71"';
+        err.detail = 'Key (slug)=(abc123def) already exists.';
         throw err;
       });
 

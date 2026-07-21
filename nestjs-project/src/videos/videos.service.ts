@@ -15,7 +15,18 @@ import { generateSlug } from './slug.util';
 import { VideoNotFoundException } from './exceptions/video-not-found.exception';
 
 const PG_UNIQUE_VIOLATION = '23505';
+const SLUG_COLUMN = 'slug';
 const MAX_SLUG_RETRIES = 5;
+
+function isPgUniqueViolationOnColumn(err: unknown, column: string): boolean {
+  if (!(err instanceof QueryFailedError)) return false;
+  const e = err as any;
+  return (
+    e.code === PG_UNIQUE_VIOLATION &&
+    typeof e.detail === 'string' &&
+    e.detail.includes(column)
+  );
+}
 
 @Injectable()
 export class VideosService {
@@ -51,11 +62,7 @@ export class VideosService {
           }),
         );
       } catch (err) {
-        if (
-          err instanceof QueryFailedError &&
-          (err as unknown as { code?: string }).code === PG_UNIQUE_VIOLATION &&
-          err.message.includes('slug')
-        ) {
+        if (isPgUniqueViolationOnColumn(err, SLUG_COLUMN)) {
           // Slug collision; retry with a new slug
           continue;
         }

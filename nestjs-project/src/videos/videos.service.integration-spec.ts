@@ -1,22 +1,26 @@
 import { DataSource, Repository } from 'typeorm';
+import { Test, TestingModule } from '@nestjs/testing';
+import { ConfigModule } from '@nestjs/config';
 import {
   cleanAllTables,
   createTestDataSource,
 } from '../test/create-test-data-source';
+import storageConfig from '../config/storage.config';
+import { StorageModule } from '../storage/storage.module';
 import { User } from '../users/entities/user.entity';
 import { Channel } from '../channels/entities/channel.entity';
 import { Video, VideoStatus } from './entities/video.entity';
 import { VideosService } from './videos.service';
 import { StorageService } from '../storage/storage.service';
 import { InitiateUploadDto } from './dto/initiate-upload.dto';
-import type { PresignedPart } from '../storage/storage.service';
 
 const ALL_ENTITIES = [User, Channel, Video];
 
 describe('VideosService (integration)', () => {
   let dataSource: DataSource;
+  let storageTestingModule: TestingModule;
+  let storageService: StorageService;
   let videosService: VideosService;
-  let mockStorageService: jest.Mocked<StorageService>;
   let userRepository: Repository<User>;
   let channelRepository: Repository<Channel>;
   let videoRepository: Repository<Video>;
@@ -29,27 +33,28 @@ describe('VideosService (integration)', () => {
     channelRepository = dataSource.getRepository(Channel);
     videoRepository = dataSource.getRepository(Video);
 
-    // Create a mock storage service
-    mockStorageService = {
-      createMultipartUpload: jest.fn(),
-      getPresignedUploadPartUrls: jest.fn(),
-      abortMultipartUpload: jest.fn(),
-    } as any;
+    // Create a real StorageService instance
+    storageTestingModule = await Test.createTestingModule({
+      imports: [
+        ConfigModule.forRoot({ isGlobal: true, load: [storageConfig] }),
+        StorageModule,
+      ],
+    }).compile();
+    storageService = storageTestingModule.get(StorageService);
 
-    // Create the service with the real repository and mocked storage service
-    videosService = new VideosService(videoRepository, mockStorageService, {
-      uploadPartSizeBytes: 104857600, // 100 MiB
-      maxFileSizeBytes: 10737418240,
-    } as any);
+    // Create the service with the real repository and real storage service
+    const config = storageConfig();
+    videosService = new VideosService(videoRepository, storageService, config);
   });
 
   afterAll(async () => {
     await dataSource.destroy();
+    await storageTestingModule.close();
   });
 
   beforeEach(async () => {
     await cleanAllTables(dataSource);
-    jest.clearAllMocks();
+    jest.restoreAllMocks();
   });
 
   let userCounter = 0;
@@ -88,23 +93,15 @@ describe('VideosService (integration)', () => {
         fileSizeBytes: 104857600, // 100 MiB
       };
 
-      const mockParts: PresignedPart[] = [
-        { partNumber: 1, url: 'https://s3.example.com/part1' },
-      ];
-
-      mockStorageService.createMultipartUpload.mockResolvedValue(
-        'upload-id-123',
-      );
-      mockStorageService.getPresignedUploadPartUrls.mockResolvedValue(
-        mockParts,
-      );
-
       const result = await videosService.initiateUpload(channel.id, dto);
 
       expect(result.id).toBeDefined();
       expect(result.slug).toBeDefined();
-      expect(result.uploadId).toBe('upload-id-123');
-      expect(result.parts).toEqual(mockParts);
+      expect(result.uploadId).toBeDefined();
+      expect(typeof result.uploadId).toBe('string');
+      expect(result.uploadId.length).toBeGreaterThan(0);
+      expect(result.parts).toBeDefined();
+      expect(result.parts.length).toBeGreaterThan(0);
 
       const persisted = await videoRepository.findOneBy({ id: result.id });
       expect(persisted).not.toBeNull();
@@ -114,7 +111,7 @@ describe('VideosService (integration)', () => {
       expect(persisted!.storage_key).toBe(
         `videos/${channel.id}/${persisted!.id}/original.mp4`,
       );
-      expect(persisted!.upload_id).toBe('upload-id-123');
+      expect(persisted!.upload_id).toBe(result.uploadId);
       expect(persisted!.original_filename).toBe(dto.originalFilename);
       expect(persisted!.mime_type).toBe(dto.mimeType);
       expect(persisted!.file_size_bytes).toBe(String(dto.fileSizeBytes));
@@ -130,26 +127,17 @@ describe('VideosService (integration)', () => {
         fileSizeBytes: 314572800, // 300 MiB
       };
 
-      const mockParts: PresignedPart[] = [
-        { partNumber: 1, url: 'https://s3.example.com/part1' },
-        { partNumber: 2, url: 'https://s3.example.com/part2' },
-        { partNumber: 3, url: 'https://s3.example.com/part3' },
-      ];
-
-      mockStorageService.createMultipartUpload.mockResolvedValue(
-        'upload-id-123',
-      );
-      mockStorageService.getPresignedUploadPartUrls.mockResolvedValue(
-        mockParts,
-      );
+      const spy = jest.spyOn(storageService, 'getPresignedUploadPartUrls');
 
       const result = await videosService.initiateUpload(channel.id, dto);
 
       // 314572800 / 104857600 = 3, so partCount should be 3
       expect(result.parts.length).toBe(3);
-      expect(
-        mockStorageService.getPresignedUploadPartUrls,
-      ).toHaveBeenCalledWith(expect.any(String), 'upload-id-123', 3);
+      expect(spy).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(String),
+        3,
+      );
     });
 
     it('generates unique slugs on multiple calls (no collision in normal case)', async () => {
@@ -162,20 +150,7 @@ describe('VideosService (integration)', () => {
         fileSizeBytes: 104857600,
       };
 
-      const mockParts: PresignedPart[] = [
-        { partNumber: 1, url: 'https://s3.example.com/part1' },
-      ];
-
-      mockStorageService.createMultipartUpload.mockResolvedValue('upload-id-1');
-      mockStorageService.getPresignedUploadPartUrls.mockResolvedValue(
-        mockParts,
-      );
-
       const result1 = await videosService.initiateUpload(channel.id, dto);
-
-      mockStorageService.createMultipartUpload.mockResolvedValueOnce(
-        'upload-id-2',
-      );
 
       const result2 = await videosService.initiateUpload(channel.id, {
         ...dto,
@@ -199,22 +174,19 @@ describe('VideosService (integration)', () => {
         fileSizeBytes: 104857600,
       };
 
-      mockStorageService.createMultipartUpload.mockResolvedValue(
-        'upload-id-123',
-      );
-      mockStorageService.getPresignedUploadPartUrls.mockRejectedValue(
-        new Error('Presign failed'),
-      );
-      mockStorageService.abortMultipartUpload.mockResolvedValue(undefined);
+      jest
+        .spyOn(storageService, 'getPresignedUploadPartUrls')
+        .mockRejectedValueOnce(new Error('Presign failed'));
+      const abortSpy = jest.spyOn(storageService, 'abortMultipartUpload');
 
       await expect(
         videosService.initiateUpload(channel.id, dto),
       ).rejects.toThrow('Presign failed');
 
-      // Verify abort was called
-      expect(mockStorageService.abortMultipartUpload).toHaveBeenCalledWith(
+      // Verify abort was called with the correct arguments
+      expect(abortSpy).toHaveBeenCalledWith(
         expect.stringContaining('videos/'),
-        'upload-id-123',
+        expect.any(String),
       );
 
       // Verify no draft video was left behind
