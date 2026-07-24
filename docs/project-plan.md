@@ -31,56 +31,58 @@ Veja o diagrama de arquitetura do projeto: [software-arch.mermaid](diagrams/soft
 
 ## 3. Fases do Projeto
 
-### Fase 01 — Configuração Base do Projeto
+> Status: ✅ concluída · ✅ (backend) concluída apenas no backend, UI ainda pendente · sem marcação = planejada.
+
+### Fase 01 — Configuração Base do Projeto ✅
 
 Preparação de toda a fundação do projeto: repositório, ambiente de desenvolvimento, projetos Next.js e Nest.js, banco de dados PostgreSQL e serviços auxiliares.
 
-- Repositório com estrutura de monorepo (frontend e backend)
-- Projeto Next.js (frontend) (será criado depois, não agora) e Nest.js (backend) inicializados
-- Ambiente de desenvolvimento local com todos os serviços via Docker Compose
-- Estrutura inicial do banco de dados PostgreSQL (schema, migrations e seeds) (sem tabelas ainda)
-- Fundação de IA para coding.
+- [x] Repositório com estrutura de monorepo (frontend e backend)
+- [x] Projeto Next.js (frontend) e Nest.js (backend) inicializados
+- [x] Ambiente de desenvolvimento local com todos os serviços via Docker Compose
+- [x] Estrutura inicial do banco de dados PostgreSQL (schema, migrations e seeds)
+- [x] Fundação de IA para coding.
 
 **Entregáveis:** ambiente de desenvolvimento funcional, banco de dados configurado.
 
 ---
 
-### Fase 02 — Cadastro, Login e Gerenciamento de Conta
+### Fase 02 — Cadastro, Login e Gerenciamento de Conta ✅
 
 > Depende de: Fase 01
 
 Fluxo completo de criação de conta, confirmação por e-mail, login, logout e recuperação de senha.
 
-- Serviço de envio de e-mails transacionais
-- Cadastro de usuário com e-mail e senha
-- Criação automática do canal do usuário a partir do prefixo do e-mail
-- Confirmação de conta via e-mail com link de ativação
-- Login e controle de sessão do usuário
-- Logout
-- Recuperação de senha: solicitação via e-mail → link com token → redefinição
-- Telas de cadastro, login, confirmação de conta e recuperação de senha
+- [x] Serviço de envio de e-mails transacionais
+- [x] Cadastro de usuário com e-mail e senha
+- [x] Criação automática do canal do usuário a partir do prefixo do e-mail
+- [x] Confirmação de conta via e-mail com link de ativação
+- [x] Login e controle de sessão do usuário
+- [x] Logout
+- [x] Recuperação de senha: solicitação via e-mail → link com token → redefinição
+- [x] Telas de cadastro, login, confirmação de conta e recuperação de senha
 
 **Entregáveis:** fluxo completo de cadastro → confirmação → login → recuperação de senha funcionando. Canal criado automaticamente para cada usuário.
 
 ---
 
-### Fase 03 — Upload e Processamento de Vídeos
+### Fase 03 — Upload e Processamento de Vídeos ✅ (backend)
 
 > Depende de: Fase 01, Fase 02
 
 Upload de arquivos grandes sem travar o sistema, processamento automático do vídeo e geração de URL única.
 
-- Serviço de armazenamento de arquivos (vídeos e thumbnails)
-- Serviço de processamento em segundo plano (filas)
-- Upload de vídeos com suporte a arquivos de até 10GB sem impacto na performance
-- Pré-cadastro automático do vídeo como rascunho ao iniciar o upload
-- Processamento automático do vídeo após upload (extração de duração e metadados)
-- Geração automática de thumbnail a partir de um frame do vídeo
-- URL única por vídeo, sem conflito com outros vídeos
-- Reprodução via streaming (sem necessidade de download completo)
-- Download do vídeo pelo usuário
+- [x] Serviço de armazenamento de arquivos (vídeos e thumbnails) — `StorageService` (MinIO/S3, multipart upload)
+- [x] Serviço de processamento em segundo plano (filas) — `QueueModule` (BullMQ/Redis) + `video-worker`
+- [x] Upload de vídeos com suporte a arquivos de até 10GB sem impacto na performance — multipart upload via `POST /videos` + `POST /videos/:id/complete-upload`
+- [x] Pré-cadastro automático do vídeo como rascunho ao iniciar o upload
+- [x] Processamento automático do vídeo após upload (extração de duração e metadados) — `VideoProcessingProcessor` (fluent-ffmpeg)
+- [x] Geração automática de thumbnail a partir de um frame do vídeo
+- [x] URL única por vídeo, sem conflito com outros vídeos — slug único com retry em colisão
+- [x] Reprodução via streaming (sem necessidade de download completo) — `GET /videos/:slug/stream` (range requests)
+- [x] Download do vídeo pelo usuário — `GET /videos/:slug/download`
 
-**Entregáveis:** upload de até 10GB funcional, processamento automático do vídeo, streaming funcionando, URLs únicas geradas.
+**Entregáveis:** upload de até 10GB funcional, processamento automático do vídeo, streaming funcionando, URLs únicas geradas. **Backend concluído** (`nestjs-project`, módulos `videos`, `storage`, `queue`, `video-worker`); **UI de upload/gerenciamento no frontend ainda não implementada** — fica para a Fase 04, que já cobre o painel de gerenciamento de vídeos.
 
 ---
 
