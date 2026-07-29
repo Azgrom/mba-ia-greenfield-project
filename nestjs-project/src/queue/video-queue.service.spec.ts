@@ -12,17 +12,18 @@ import {
 
 type QueueAdd = Queue<ProcessVideoJobData>['add'];
 
-/**
- * The service only ever calls `add`, so the stub implements just that method.
- * `addMock` is held separately from the queue object: asserting on a standalone
- * function reference keeps the expectations free of unbound-method access.
- */
+/** Only `id` is ever read from the returned job, so the rest is left unset. */
 function buildJob(id: string): Job<ProcessVideoJobData> {
   return { id } as Job<ProcessVideoJobData>;
 }
 
 describe('VideoQueueService', () => {
   let service: VideoQueueService;
+  /**
+   * The service only ever calls `add`, so the stub implements just that method.
+   * The mock is held separately from the queue object: asserting on a standalone
+   * function reference keeps the expectations free of unbound-method access.
+   */
   let addMock: jest.MockedFunction<QueueAdd>;
 
   beforeEach(async () => {
