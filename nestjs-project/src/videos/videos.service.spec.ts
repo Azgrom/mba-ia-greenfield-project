@@ -4,6 +4,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import type { ConfigType } from '@nestjs/config';
 import { VideosService } from './videos.service';
 import { Video, VideoStatus } from './entities/video.entity';
+import type { Channel } from '../channels/entities/channel.entity';
 import { StorageService } from '../storage/storage.service';
 import storageConfig from '../config/storage.config';
 import { InitiateUploadDto } from './dto/initiate-upload.dto';
@@ -14,6 +15,54 @@ import { VideoNotFoundException } from './exceptions/video-not-found.exception';
 import { UploadAlreadyCompletedException } from './exceptions/upload-already-completed.exception';
 import { MultipartUploadFailedException } from './exceptions/multipart-upload-failed.exception';
 import { VideoProcessingEnqueueFailedException } from './exceptions/video-processing-enqueue-failed.exception';
+
+/**
+ * The `channel` relation is never loaded by the code paths under test, so the
+ * mocks leave it unset. The cast keeps the fixture typed as a real `Video`
+ * without widening the whole literal to `any`.
+ */
+const UNLOADED_CHANNEL = undefined as unknown as Channel;
+
+function buildVideo(overrides: Partial<Video> = {}): Video {
+  return {
+    id: 'video-123',
+    channel_id: 'channel-123',
+    title: 'My Video',
+    slug: 'abc123def',
+    status: VideoStatus.DRAFT,
+    storage_key: '',
+    thumbnail_key: null,
+    upload_id: null,
+    original_filename: 'video.mp4',
+    mime_type: 'video/mp4',
+    file_size_bytes: '104857600',
+    duration_seconds: null,
+    metadata: null,
+    error_message: null,
+    channel: UNLOADED_CHANNEL,
+    created_at: new Date(),
+    updated_at: new Date(),
+    ...overrides,
+  };
+}
+
+/**
+ * Builds the error PostgreSQL raises on a `slug` unique-constraint violation.
+ * `QueryFailedError` copies the driver error's own properties (`code`,
+ * `detail`) onto itself, which is exactly what `videos.service.ts` reads.
+ */
+function buildSlugCollisionError(): QueryFailedError {
+  const driverError = Object.assign(
+    new Error(
+      'duplicate key value violates unique constraint "UQ_5dbcc1ee100f853490582eccc71"',
+    ),
+    {
+      code: '23505',
+      detail: 'Key (slug)=(abc123def) already exists.',
+    },
+  );
+  return new QueryFailedError('INSERT INTO "videos" ...', [], driverError);
+}
 
 describe('VideosService', () => {
   let service: VideosService;
@@ -85,25 +134,10 @@ describe('VideosService', () => {
         fileSizeBytes: 314572800, // 300 MiB
       };
 
-      const mockVideo: Video = {
-        id: 'video-123',
+      const mockVideo = buildVideo({
         channel_id: channelId,
-        title: dto.title,
-        slug: 'abc123def',
-        status: VideoStatus.DRAFT,
-        storage_key: '',
-        thumbnail_key: null,
-        upload_id: null,
-        original_filename: dto.originalFilename,
-        mime_type: dto.mimeType,
         file_size_bytes: String(dto.fileSizeBytes),
-        duration_seconds: null,
-        metadata: null,
-        error_message: null,
-        channel: undefined as any,
-        created_at: new Date(),
-        updated_at: new Date(),
-      };
+      });
 
       const mockParts: PresignedPart[] = [
         { partNumber: 1, url: 'https://s3.example.com/part1' },
@@ -116,14 +150,14 @@ describe('VideosService', () => {
       jest
         .spyOn(storageService, 'createMultipartUpload')
         .mockResolvedValue('upload-id-123');
-      jest
+      const getPresignedUploadPartUrlsSpy = jest
         .spyOn(storageService, 'getPresignedUploadPartUrls')
         .mockResolvedValue(mockParts);
 
       const result = await service.initiateUpload(channelId, dto);
 
       // Verify partCount: Math.max(1, Math.ceil(314572800 / 104857600)) = Math.max(1, 3) = 3
-      expect(storageService.getPresignedUploadPartUrls).toHaveBeenCalledWith(
+      expect(getPresignedUploadPartUrlsSpy).toHaveBeenCalledWith(
         expect.any(String),
         'upload-id-123',
         3,
@@ -140,43 +174,27 @@ describe('VideosService', () => {
         fileSizeBytes: 104857600,
       };
 
-      const mockVideo: Video = {
-        id: 'video-123',
-        channel_id: channelId,
-        title: dto.title,
-        slug: 'abc123def',
-        status: VideoStatus.DRAFT,
-        storage_key: '',
-        thumbnail_key: null,
-        upload_id: null,
-        original_filename: dto.originalFilename,
-        mime_type: dto.mimeType,
-        file_size_bytes: String(dto.fileSizeBytes),
-        duration_seconds: null,
-        metadata: null,
-        error_message: null,
-        channel: undefined as any,
-        created_at: new Date(),
-        updated_at: new Date(),
-      };
+      const mockVideo = buildVideo({ channel_id: channelId });
 
       const callOrder: string[] = [];
       jest.spyOn(videoRepository, 'create').mockReturnValue(mockVideo);
-      jest.spyOn(videoRepository, 'save').mockImplementation(async () => {
+      jest.spyOn(videoRepository, 'save').mockImplementation(() => {
         callOrder.push('save');
-        return mockVideo;
+        return Promise.resolve(mockVideo);
       });
       jest
         .spyOn(storageService, 'createMultipartUpload')
-        .mockImplementation(async () => {
+        .mockImplementation(() => {
           callOrder.push('createMultipartUpload');
-          return 'upload-id-123';
+          return Promise.resolve('upload-id-123');
         });
       jest
         .spyOn(storageService, 'getPresignedUploadPartUrls')
-        .mockImplementation(async () => {
+        .mockImplementation(() => {
           callOrder.push('getPresignedUploadPartUrls');
-          return [{ partNumber: 1, url: 'https://s3.example.com/part1' }];
+          return Promise.resolve([
+            { partNumber: 1, url: 'https://s3.example.com/part1' },
+          ]);
         });
 
       await service.initiateUpload(channelId, dto);
@@ -198,25 +216,7 @@ describe('VideosService', () => {
         fileSizeBytes: 104857600,
       };
 
-      const mockVideo: Video = {
-        id: 'video-123',
-        channel_id: channelId,
-        title: dto.title,
-        slug: 'abc123def',
-        status: VideoStatus.DRAFT,
-        storage_key: '',
-        thumbnail_key: null,
-        upload_id: null,
-        original_filename: dto.originalFilename,
-        mime_type: dto.mimeType,
-        file_size_bytes: String(dto.fileSizeBytes),
-        duration_seconds: null,
-        metadata: null,
-        error_message: null,
-        channel: undefined as any,
-        created_at: new Date(),
-        updated_at: new Date(),
-      };
+      const mockVideo = buildVideo({ channel_id: channelId });
 
       const callOrder: string[] = [];
       jest.spyOn(videoRepository, 'create').mockReturnValue(mockVideo);
@@ -226,17 +226,16 @@ describe('VideosService', () => {
         .mockResolvedValue('upload-id-123');
       jest
         .spyOn(storageService, 'getPresignedUploadPartUrls')
-        .mockImplementation(async () => {
-          throw new Error('Presign failed');
-        });
+        .mockRejectedValue(new Error('Presign failed'));
       jest
         .spyOn(storageService, 'abortMultipartUpload')
-        .mockImplementation(async () => {
+        .mockImplementation(() => {
           callOrder.push('abortMultipartUpload');
+          return Promise.resolve();
         });
-      jest.spyOn(videoRepository, 'delete').mockImplementation(async () => {
+      jest.spyOn(videoRepository, 'delete').mockImplementation(() => {
         callOrder.push('delete');
-        return { affected: 1 } as any;
+        return Promise.resolve({ raw: [], affected: 1 });
       });
 
       await expect(service.initiateUpload(channelId, dto)).rejects.toThrow(
@@ -256,48 +255,28 @@ describe('VideosService', () => {
         fileSizeBytes: 104857600,
       };
 
-      const mockVideo: Video = {
-        id: 'video-123',
-        channel_id: channelId,
-        title: dto.title,
-        slug: 'abc123def',
-        status: VideoStatus.DRAFT,
-        storage_key: '',
-        thumbnail_key: null,
-        upload_id: null,
-        original_filename: dto.originalFilename,
-        mime_type: dto.mimeType,
-        file_size_bytes: String(dto.fileSizeBytes),
-        duration_seconds: null,
-        metadata: null,
-        error_message: null,
-        channel: undefined as any,
-        created_at: new Date(),
-        updated_at: new Date(),
-      };
+      const mockVideo = buildVideo({ channel_id: channelId });
 
       jest.spyOn(videoRepository, 'create').mockReturnValue(mockVideo);
       jest.spyOn(videoRepository, 'save').mockResolvedValue(mockVideo);
       jest
         .spyOn(storageService, 'createMultipartUpload')
-        .mockImplementation(async () => {
-          throw new Error('S3 connection failed');
-        });
-      jest
+        .mockRejectedValue(new Error('S3 connection failed'));
+      const abortMultipartUploadSpy = jest
         .spyOn(storageService, 'abortMultipartUpload')
         .mockResolvedValue(undefined);
-      jest
+      const deleteSpy = jest
         .spyOn(videoRepository, 'delete')
-        .mockResolvedValue({ affected: 1 } as any);
+        .mockResolvedValue({ raw: [], affected: 1 });
 
       await expect(service.initiateUpload(channelId, dto)).rejects.toThrow(
         'S3 connection failed',
       );
 
       // Verify abort was not called
-      expect(storageService.abortMultipartUpload).not.toHaveBeenCalled();
+      expect(abortMultipartUploadSpy).not.toHaveBeenCalled();
       // But delete should still be called
-      expect(videoRepository.delete).toHaveBeenCalledWith('video-123');
+      expect(deleteSpy).toHaveBeenCalledWith('video-123');
     });
 
     it('on slug collision (QueryFailedError code 23505), retries and eventually succeeds', async () => {
@@ -309,42 +288,21 @@ describe('VideosService', () => {
         fileSizeBytes: 104857600,
       };
 
-      const mockVideo: Video = {
-        id: 'video-123',
-        channel_id: channelId,
-        title: dto.title,
-        slug: 'abc123def',
-        status: VideoStatus.DRAFT,
-        storage_key: '',
-        thumbnail_key: null,
-        upload_id: null,
-        original_filename: dto.originalFilename,
-        mime_type: dto.mimeType,
-        file_size_bytes: String(dto.fileSizeBytes),
-        duration_seconds: null,
-        metadata: null,
-        error_message: null,
-        channel: undefined as any,
-        created_at: new Date(),
-        updated_at: new Date(),
-      };
+      const mockVideo = buildVideo({ channel_id: channelId });
 
       let saveCallCount = 0;
       jest.spyOn(videoRepository, 'create').mockReturnValue(mockVideo);
-      jest.spyOn(videoRepository, 'save').mockImplementation(async () => {
-        saveCallCount += 1;
-        if (saveCallCount <= 2) {
-          // First 2 saves fail with slug collision
-          const err = Object.create(QueryFailedError.prototype);
-          err.code = '23505';
-          err.message =
-            'duplicate key value violates unique constraint "UQ_5dbcc1ee100f853490582eccc71"';
-          err.detail = 'Key (slug)=(abc123def) already exists.';
-          throw err;
-        }
-        // Third save succeeds
-        return mockVideo;
-      });
+      const saveSpy = jest
+        .spyOn(videoRepository, 'save')
+        .mockImplementation(() => {
+          saveCallCount += 1;
+          if (saveCallCount <= 2) {
+            // First 2 saves fail with slug collision
+            return Promise.reject(buildSlugCollisionError());
+          }
+          // Third save succeeds
+          return Promise.resolve(mockVideo);
+        });
       jest
         .spyOn(storageService, 'createMultipartUpload')
         .mockResolvedValue('upload-id-123');
@@ -357,7 +315,7 @@ describe('VideosService', () => {
       const result = await service.initiateUpload(channelId, dto);
 
       // Verify 4 save calls: 2 failed collisions + 1 successful for slug + 1 for storage_key/upload_id
-      expect(videoRepository.save).toHaveBeenCalledTimes(4);
+      expect(saveSpy).toHaveBeenCalledTimes(4);
       expect(result.id).toBe('video-123');
       expect(result.slug).toBe('abc123def');
     });
@@ -371,43 +329,20 @@ describe('VideosService', () => {
         fileSizeBytes: 104857600,
       };
 
-      const mockVideo: Video = {
-        id: 'video-123',
-        channel_id: channelId,
-        title: dto.title,
-        slug: 'abc123def',
-        status: VideoStatus.DRAFT,
-        storage_key: '',
-        thumbnail_key: null,
-        upload_id: null,
-        original_filename: dto.originalFilename,
-        mime_type: dto.mimeType,
-        file_size_bytes: String(dto.fileSizeBytes),
-        duration_seconds: null,
-        metadata: null,
-        error_message: null,
-        channel: undefined as any,
-        created_at: new Date(),
-        updated_at: new Date(),
-      };
+      const mockVideo = buildVideo({ channel_id: channelId });
 
       jest.spyOn(videoRepository, 'create').mockReturnValue(mockVideo);
-      jest.spyOn(videoRepository, 'save').mockImplementation(async () => {
-        // Always fail with slug collision
-        const err = Object.create(QueryFailedError.prototype);
-        err.code = '23505';
-        err.message =
-          'duplicate key value violates unique constraint "UQ_5dbcc1ee100f853490582eccc71"';
-        err.detail = 'Key (slug)=(abc123def) already exists.';
-        throw err;
-      });
+      // Always fail with slug collision
+      const saveSpy = jest
+        .spyOn(videoRepository, 'save')
+        .mockRejectedValue(buildSlugCollisionError());
 
       await expect(service.initiateUpload(channelId, dto)).rejects.toThrow(
         'Failed to allocate a unique video slug after 5 attempts',
       );
 
       // Verify exactly 5 save attempts
-      expect(videoRepository.save).toHaveBeenCalledTimes(5);
+      expect(saveSpy).toHaveBeenCalledTimes(5);
     });
 
     it('re-throws non-collision errors from the slug retry loop', async () => {
@@ -419,25 +354,7 @@ describe('VideosService', () => {
         fileSizeBytes: 104857600,
       };
 
-      const mockVideo: Video = {
-        id: 'video-123',
-        channel_id: channelId,
-        title: dto.title,
-        slug: 'abc123def',
-        status: VideoStatus.DRAFT,
-        storage_key: '',
-        thumbnail_key: null,
-        upload_id: null,
-        original_filename: dto.originalFilename,
-        mime_type: dto.mimeType,
-        file_size_bytes: String(dto.fileSizeBytes),
-        duration_seconds: null,
-        metadata: null,
-        error_message: null,
-        channel: undefined as any,
-        created_at: new Date(),
-        updated_at: new Date(),
-      };
+      const mockVideo = buildVideo({ channel_id: channelId });
 
       jest.spyOn(videoRepository, 'create').mockReturnValue(mockVideo);
       jest
@@ -452,44 +369,34 @@ describe('VideosService', () => {
 
   describe('completeUpload', () => {
     it('throws VideoNotFoundException when video not found', async () => {
-      jest.spyOn(videoRepository, 'findOneBy').mockResolvedValue(null);
+      const findOneBySpy = jest
+        .spyOn(videoRepository, 'findOneBy')
+        .mockResolvedValue(null);
 
       const dto: CompleteUploadDto = {
         parts: [{ partNumber: 1, etag: 'etag-1' }],
       };
 
-      const error = await service
-        .completeUpload('channel-123', 'video-123', dto)
-        .catch((err) => err);
+      const result = service.completeUpload('channel-123', 'video-123', dto);
 
-      expect(error).toBeInstanceOf(VideoNotFoundException);
-      expect(error.errorCode).toBe('VIDEO_NOT_FOUND');
-      expect(videoRepository.findOneBy).toHaveBeenCalledWith({
+      await expect(result).rejects.toBeInstanceOf(VideoNotFoundException);
+      await expect(result).rejects.toMatchObject({
+        errorCode: 'VIDEO_NOT_FOUND',
+      });
+      expect(findOneBySpy).toHaveBeenCalledWith({
         id: 'video-123',
         channel_id: 'channel-123',
       });
     });
 
     it('throws UploadAlreadyCompletedException when video status is not DRAFT', async () => {
-      const mockVideo: Video = {
-        id: 'video-123',
-        channel_id: 'channel-123',
+      const mockVideo = buildVideo({
         title: 'Test Video',
         slug: 'test-slug',
         status: VideoStatus.PROCESSING,
         storage_key: 'videos/channel-123/video-123/original.mp4',
-        thumbnail_key: null,
         upload_id: 'upload-123',
-        original_filename: 'video.mp4',
-        mime_type: 'video/mp4',
-        file_size_bytes: '104857600',
-        duration_seconds: null,
-        metadata: null,
-        error_message: null,
-        channel: undefined as any,
-        created_at: new Date(),
-        updated_at: new Date(),
-      };
+      });
 
       jest.spyOn(videoRepository, 'findOneBy').mockResolvedValue(mockVideo);
 
@@ -497,87 +404,68 @@ describe('VideosService', () => {
         parts: [{ partNumber: 1, etag: 'etag-1' }],
       };
 
-      const error = await service
-        .completeUpload('channel-123', 'video-123', dto)
-        .catch((err) => err);
+      const result = service.completeUpload('channel-123', 'video-123', dto);
 
-      expect(error).toBeInstanceOf(UploadAlreadyCompletedException);
-      expect(error.errorCode).toBe('UPLOAD_ALREADY_COMPLETED');
+      await expect(result).rejects.toBeInstanceOf(
+        UploadAlreadyCompletedException,
+      );
+      await expect(result).rejects.toMatchObject({
+        errorCode: 'UPLOAD_ALREADY_COMPLETED',
+      });
     });
 
     it('throws MultipartUploadFailedException when storage service fails', async () => {
-      const mockVideo: Video = {
-        id: 'video-123',
-        channel_id: 'channel-123',
+      const mockVideo = buildVideo({
         title: 'Test Video',
         slug: 'test-slug',
-        status: VideoStatus.DRAFT,
         storage_key: 'videos/channel-123/video-123/original.mp4',
-        thumbnail_key: null,
         upload_id: 'upload-123',
-        original_filename: 'video.mp4',
-        mime_type: 'video/mp4',
-        file_size_bytes: '104857600',
-        duration_seconds: null,
-        metadata: null,
-        error_message: null,
-        channel: undefined as any,
-        created_at: new Date(),
-        updated_at: new Date(),
-      };
+      });
 
       jest.spyOn(videoRepository, 'findOneBy').mockResolvedValue(mockVideo);
       jest
         .spyOn(storageService, 'completeMultipartUpload')
         .mockRejectedValue(new Error('S3 error'));
+      const saveSpy = jest.spyOn(videoRepository, 'save');
 
       const dto: CompleteUploadDto = {
         parts: [{ partNumber: 1, etag: 'etag-1' }],
       };
 
-      const error = await service
-        .completeUpload('channel-123', 'video-123', dto)
-        .catch((err) => err);
+      const result = service.completeUpload('channel-123', 'video-123', dto);
 
-      expect(error).toBeInstanceOf(MultipartUploadFailedException);
-      expect(error.errorCode).toBe('MULTIPART_UPLOAD_FAILED');
+      await expect(result).rejects.toBeInstanceOf(
+        MultipartUploadFailedException,
+      );
+      await expect(result).rejects.toMatchObject({
+        errorCode: 'MULTIPART_UPLOAD_FAILED',
+      });
       // Verify status was not changed
-      expect(videoRepository.save).not.toHaveBeenCalled();
+      expect(saveSpy).not.toHaveBeenCalled();
     });
 
     it('succeeds and sets status to PROCESSING, clears upload_id, and enqueues job', async () => {
-      const mockVideo: Video = {
-        id: 'video-123',
-        channel_id: 'channel-123',
+      const mockVideo = buildVideo({
         title: 'Test Video',
         slug: 'test-slug',
-        status: VideoStatus.DRAFT,
         storage_key: 'videos/channel-123/video-123/original.mp4',
-        thumbnail_key: null,
         upload_id: 'upload-123',
-        original_filename: 'video.mp4',
-        mime_type: 'video/mp4',
-        file_size_bytes: '104857600',
-        duration_seconds: null,
-        metadata: null,
-        error_message: null,
-        channel: undefined as any,
-        created_at: new Date(),
-        updated_at: new Date(),
-      };
+      });
 
-      const updatedVideo: Video = {
+      const updatedVideo = buildVideo({
         ...mockVideo,
         status: VideoStatus.PROCESSING,
         upload_id: null,
-      };
+      });
 
       jest.spyOn(videoRepository, 'findOneBy').mockResolvedValue(mockVideo);
-      jest
+      const completeMultipartUploadSpy = jest
         .spyOn(storageService, 'completeMultipartUpload')
         .mockResolvedValue(undefined);
-      jest.spyOn(videoRepository, 'save').mockResolvedValue(updatedVideo);
-      jest
+      const saveSpy = jest
+        .spyOn(videoRepository, 'save')
+        .mockResolvedValue(updatedVideo);
+      const enqueueProcessingSpy = jest
         .spyOn(videoQueueService, 'enqueueProcessing')
         .mockResolvedValue(undefined);
 
@@ -597,57 +485,44 @@ describe('VideosService', () => {
       expect(result.status).toBe(VideoStatus.PROCESSING);
       expect(result.upload_id).toBeNull();
 
-      expect(storageService.completeMultipartUpload).toHaveBeenCalledWith(
+      expect(completeMultipartUploadSpy).toHaveBeenCalledWith(
         'videos/channel-123/video-123/original.mp4',
         'upload-123',
         dto.parts,
       );
 
-      expect(videoRepository.save).toHaveBeenCalledWith(
+      expect(saveSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           status: VideoStatus.PROCESSING,
           upload_id: null,
         }),
       );
 
-      expect(videoQueueService.enqueueProcessing).toHaveBeenCalledWith(
-        'video-123',
-      );
-      expect(videoQueueService.enqueueProcessing).toHaveBeenCalledTimes(1);
+      expect(enqueueProcessingSpy).toHaveBeenCalledWith('video-123');
+      expect(enqueueProcessingSpy).toHaveBeenCalledTimes(1);
     });
 
     it('throws VideoProcessingEnqueueFailedException when enqueue fails, but video is already saved as PROCESSING', async () => {
-      const mockVideo: Video = {
-        id: 'video-123',
-        channel_id: 'channel-123',
+      const mockVideo = buildVideo({
         title: 'Test Video',
         slug: 'test-slug',
-        status: VideoStatus.DRAFT,
         storage_key: 'videos/channel-123/video-123/original.mp4',
-        thumbnail_key: null,
         upload_id: 'upload-123',
-        original_filename: 'video.mp4',
-        mime_type: 'video/mp4',
-        file_size_bytes: '104857600',
-        duration_seconds: null,
-        metadata: null,
-        error_message: null,
-        channel: undefined as any,
-        created_at: new Date(),
-        updated_at: new Date(),
-      };
+      });
 
-      const updatedVideo: Video = {
+      const updatedVideo = buildVideo({
         ...mockVideo,
         status: VideoStatus.PROCESSING,
         upload_id: null,
-      };
+      });
 
       jest.spyOn(videoRepository, 'findOneBy').mockResolvedValue(mockVideo);
       jest
         .spyOn(storageService, 'completeMultipartUpload')
         .mockResolvedValue(undefined);
-      jest.spyOn(videoRepository, 'save').mockResolvedValue(updatedVideo);
+      const saveSpy = jest
+        .spyOn(videoRepository, 'save')
+        .mockResolvedValue(updatedVideo);
       jest
         .spyOn(videoQueueService, 'enqueueProcessing')
         .mockRejectedValue(new Error('Redis connection failed'));
@@ -656,15 +531,17 @@ describe('VideosService', () => {
         parts: [{ partNumber: 1, etag: 'etag-1' }],
       };
 
-      const error = await service
-        .completeUpload('channel-123', 'video-123', dto)
-        .catch((err) => err);
+      const result = service.completeUpload('channel-123', 'video-123', dto);
 
-      expect(error).toBeInstanceOf(VideoProcessingEnqueueFailedException);
-      expect(error.errorCode).toBe('VIDEO_PROCESSING_ENQUEUE_FAILED');
+      await expect(result).rejects.toBeInstanceOf(
+        VideoProcessingEnqueueFailedException,
+      );
+      await expect(result).rejects.toMatchObject({
+        errorCode: 'VIDEO_PROCESSING_ENQUEUE_FAILED',
+      });
 
       // Verify that videoRepository.save was called before the enqueue failure
-      expect(videoRepository.save).toHaveBeenCalledWith(
+      expect(saveSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           status: VideoStatus.PROCESSING,
           upload_id: null,
@@ -675,32 +552,21 @@ describe('VideosService', () => {
 
   describe('findBySlugOrFail', () => {
     it('returns the video when found by slug', async () => {
-      const mockVideo: Video = {
-        id: 'video-123',
-        channel_id: 'channel-123',
+      const mockVideo = buildVideo({
         title: 'Test Video',
         slug: 'test-slug',
-        status: VideoStatus.DRAFT,
         storage_key: 'videos/channel-123/video-123/original.mp4',
-        thumbnail_key: null,
         upload_id: 'upload-123',
-        original_filename: 'video.mp4',
-        mime_type: 'video/mp4',
-        file_size_bytes: '104857600',
-        duration_seconds: null,
-        metadata: null,
-        error_message: null,
-        channel: undefined as any,
-        created_at: new Date(),
-        updated_at: new Date(),
-      };
+      });
 
-      jest.spyOn(videoRepository, 'findOneBy').mockResolvedValue(mockVideo);
+      const findOneBySpy = jest
+        .spyOn(videoRepository, 'findOneBy')
+        .mockResolvedValue(mockVideo);
 
       const result = await service.findBySlugOrFail('test-slug');
 
       expect(result).toEqual(mockVideo);
-      expect(videoRepository.findOneBy).toHaveBeenCalledWith({
+      expect(findOneBySpy).toHaveBeenCalledWith({
         slug: 'test-slug',
       });
     });
@@ -708,10 +574,9 @@ describe('VideosService', () => {
     it('throws VideoNotFoundException when video not found', async () => {
       jest.spyOn(videoRepository, 'findOneBy').mockResolvedValue(null);
 
-      const error = await service
-        .findBySlugOrFail('nonexistent')
-        .catch((err) => err);
-      expect(error.errorCode).toBe('VIDEO_NOT_FOUND');
+      await expect(
+        service.findBySlugOrFail('nonexistent'),
+      ).rejects.toMatchObject({ errorCode: 'VIDEO_NOT_FOUND' });
     });
   });
 });

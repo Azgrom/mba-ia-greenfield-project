@@ -319,10 +319,9 @@ describe('VideosService (integration)', () => {
     });
 
     it('throws VideoNotFoundException when slug not found', async () => {
-      const error = await videosService
-        .findBySlugOrFail('nonexistent-slug')
-        .catch((err) => err);
-      expect(error.errorCode).toBe('VIDEO_NOT_FOUND');
+      await expect(
+        videosService.findBySlugOrFail('nonexistent-slug'),
+      ).rejects.toMatchObject({ errorCode: 'VIDEO_NOT_FOUND' });
     });
   });
 });
