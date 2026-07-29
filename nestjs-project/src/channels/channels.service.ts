@@ -7,13 +7,21 @@ const PG_UNIQUE_VIOLATION = '23505';
 const NICKNAME_COLUMN = 'nickname';
 const MAX_RETRIES = 5;
 
+type PgDriverError = {
+  code?: unknown;
+  detail?: unknown;
+};
+
 function isPgUniqueViolationOnColumn(err: unknown, column: string): boolean {
   if (!(err instanceof QueryFailedError)) return false;
-  const e = err as any;
+  // TypeORM's QueryFailedError constructor copies the driver error's own
+  // properties (code, detail, ...) onto the QueryFailedError instance itself,
+  // so they are read from `err` directly rather than `err.driverError`.
+  const pgError = err as unknown as PgDriverError;
   return (
-    e.code === PG_UNIQUE_VIOLATION &&
-    typeof e.detail === 'string' &&
-    e.detail.includes(column)
+    pgError.code === PG_UNIQUE_VIOLATION &&
+    typeof pgError.detail === 'string' &&
+    pgError.detail.includes(column)
   );
 }
 
