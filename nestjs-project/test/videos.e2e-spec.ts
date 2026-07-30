@@ -9,7 +9,14 @@ import { Video, VideoStatus } from '../src/videos/entities/video.entity';
 import { Channel } from '../src/channels/entities/channel.entity';
 import { DomainExceptionFilter } from '../src/common/filters/domain-exception.filter';
 import { ValidationExceptionFilter } from '../src/common/filters/validation-exception.filter';
+import { getQueueToken } from '@nestjs/bullmq';
+import type { Queue } from 'bullmq';
 import { cleanAllTables } from '../src/test/create-test-data-source';
+import { cleanVideoProcessingQueue } from '../src/test/clean-video-processing-queue';
+import {
+  VIDEO_PROCESSING_QUEUE,
+  type ProcessVideoJobData,
+} from '../src/queue/video-queue.constants';
 import { StorageService } from '../src/storage/storage.service';
 import type { PresignedPart } from '../src/storage/storage.service';
 import { MailService } from '../src/mail/mail.service';
@@ -88,6 +95,15 @@ describe('Videos (e2e)', () => {
   });
 
   afterAll(async () => {
+    // This suite drives complete-upload many times over, so it is the biggest
+    // single source of enqueued jobs — and every one of them outlives the rows
+    // cleanAllTables deletes. Clear them before the app (and its Redis
+    // connection) goes away.
+    await cleanVideoProcessingQueue(
+      app.get<Queue<ProcessVideoJobData>>(
+        getQueueToken(VIDEO_PROCESSING_QUEUE),
+      ),
+    );
     await app.close();
   });
 

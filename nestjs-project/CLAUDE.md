@@ -183,6 +183,10 @@ Direct-to-storage multipart upload (never through the API): `POST /videos` initi
 
 Per the project's "don't mock what you can run for real" rule: `storage.service.integration-spec.ts`, `video-processing.processor.integration-spec.ts`, and `video-processing.queue.integration-spec.ts` all exercise **real MinIO and real Redis/BullMQ** via the Compose services — never mock `StorageService` or the queue in an integration spec. Unit specs (`*.spec.ts`) still mock these collaborators.
 
+**Clean Redis, not just Postgres.** `cleanAllTables` deletes the `videos` rows but leaves the jobs a suite enqueued sitting in Redis; the worker then picks them up, cannot find the row, and fails them permanently. That is how `bull:video-processing:failed` reached 25 orphans, which had to be told apart from real failures by hand while debugging. Any suite that enqueues against the real queue must also call **`cleanVideoProcessingQueue`** (`src/test/clean-video-processing-queue.ts`) in its teardown — it is the Redis-side counterpart to `cleanAllTables`. Note `queue.drain()` alone is not enough: it leaves completed/failed jobs behind, which is why the helper also calls `queue.clean`.
+
+**A live worker competes with your spec.** The `video-worker` container consumes the same queue as the tests. A spec that asserts on a job it enqueued can have that job claimed by the container's worker first (`Job … could not be removed because it is locked by another worker`). `videos.service.integration-spec.ts` handles this by wrapping the assertion in `queue.pause()` / `queue.resume()` in a `finally`. If a queue spec is flaky only when `docker compose ps` shows `video-worker` running, this is why.
+
 ## Code Conventions
 
 - **TypeScript:** `nodenext` module resolution, `ES2023` target, `strictNullChecks` on, `noImplicitAny` off
