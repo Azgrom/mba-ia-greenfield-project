@@ -8,6 +8,8 @@ import storageConfig from '../config/storage.config';
 import queueConfig from '../config/queue.config';
 import { envValidationSchema } from '../config/env.validation';
 import { Video } from '../videos/entities/video.entity';
+import { Channel } from '../channels/entities/channel.entity';
+import { User } from '../users/entities/user.entity';
 import { StorageModule } from '../storage/storage.module';
 import { VideoProcessingProcessor } from './video-processing.processor';
 import { VIDEO_PROCESSING_QUEUE } from '../queue/video-queue.constants';
@@ -34,7 +36,12 @@ import { VIDEO_PROCESSING_QUEUE } from '../queue/video-queue.constants';
         synchronize: false,
       }),
     }),
-    TypeOrmModule.forFeature([Video]),
+    // The worker only reads/writes Video, but TypeORM needs the whole relation
+    // closure registered to build metadata at all: autoLoadEntities picks up
+    // only what forFeature declares, and Video.channel -> Channel.user means a
+    // missing Channel or User fails the entire boot, not just those relations.
+    // video-worker.module.integration-spec.ts guards this against drift.
+    TypeOrmModule.forFeature([Video, Channel, User]),
     BullModule.forRootAsync({
       imports: [ConfigModule.forFeature(queueConfig)],
       inject: [queueConfig.KEY],
