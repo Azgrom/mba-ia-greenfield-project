@@ -6,6 +6,7 @@ import queueConfig from '../config/queue.config';
 import {
   VIDEO_PROCESSING_QUEUE,
   PROCESS_VIDEO_JOB,
+  FAILED_JOB_RETENTION,
   type ProcessVideoJobData,
 } from './video-queue.constants';
 
@@ -30,7 +31,7 @@ export class VideoQueueService {
             attempts: this.queueConfiguration.videoProcessingAttempts,
             backoff: { type: 'exponential', delay: 5000 },
             removeOnComplete: true,
-            removeOnFail: false,
+            removeOnFail: FAILED_JOB_RETENTION,
           },
         );
         return;

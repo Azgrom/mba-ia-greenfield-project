@@ -69,9 +69,12 @@ npm run test:cov                         # Coverage report
 npm run test:e2e                         # End-to-end tests (always with --runInBand)
 
 npx tsc --noEmit                         # Type-check (required before declaring a task done)
-npm run lint                             # ESLint with auto-fix
+npm run lint                             # ESLint, read-only — this is the DoD gate
+npm run lint:fix                         # ESLint with --fix (developer convenience, never the gate)
 npm run format                           # Prettier formatting
 ```
+
+`lint` and `lint:fix` are deliberately separate. A gate that can rewrite the tree it is judging cannot produce evidence: a green `--fix` run means "green *after* being rewritten", and it dirties the working tree as a side effect. Use `lint` to measure and `lint:fix` to change. Do not add `--fix` back to `lint`.
 
 ### Host-only commands (Docker / connectivity probes)
 
@@ -157,6 +160,15 @@ Upload, storage, async processing, and delivery of videos. Four modules: `videos
 
 The worker is a **separate Node process**, not part of `nestjs-api`. It runs as its own Compose service (`video-worker`) via `npm run start:worker:dev`. `VIDEO_WORKER_CONCURRENCY` (default BullMQ concurrency is 1) is only honored because `start:worker:dev` preloads `-r dotenv/config` — this loads `.env` before the `@Processor` decorator reads the concurrency option at import time, ahead of `ConfigModule.forRoot()`. If you ever see the worker silently running at concurrency 1 despite `VIDEO_WORKER_CONCURRENCY` being set, check that preload flag first.
 
+### Worker liveness — do not remove
+
+`video-worker` neither serves traffic nor is depended on by any other service, so for a week nothing noticed it was in `exited (1)` while the whole test suite reported green. Two mechanisms exist specifically to stop that recurring; treat both as load-bearing:
+
+- **`WorkerHealthService`** (`src/video-worker/worker-health.service.ts`) serves a liveness endpoint on `VIDEO_WORKER_HEALTH_PORT` (default `3001`), and `compose.yaml` healthchecks it. It answers 200 only when the BullMQ consumer `isRunning()` **and** its Redis connection is `ready` — "the process exists" is deliberately not enough to pass.
+- **`main.ts` passes `abortOnError: false`** and, on a failed boot, logs the cause and keeps the process alive answering 503. Without this, Nest exits with code 1 on a bootstrap error — and `docker compose ps` does not list stopped containers, so the crash vanishes from the default view. Staying up as `unhealthy` is what makes `docker compose ps`, `up --wait`, and `depends_on: condition: service_healthy` all report the failure.
+
+When checking the stack, `docker compose ps` alone is now sufficient for this service; before, `--all` was required to even see it.
+
 ### New infra services (`compose.yaml`)
 
 - `redis` — BullMQ backing store, port `6379`.
@@ -170,6 +182,10 @@ Direct-to-storage multipart upload (never through the API): `POST /videos` initi
 ### Testing conventions specific to this subsystem
 
 Per the project's "don't mock what you can run for real" rule: `storage.service.integration-spec.ts`, `video-processing.processor.integration-spec.ts`, and `video-processing.queue.integration-spec.ts` all exercise **real MinIO and real Redis/BullMQ** via the Compose services — never mock `StorageService` or the queue in an integration spec. Unit specs (`*.spec.ts`) still mock these collaborators.
+
+**Clean Redis, not just Postgres.** `cleanAllTables` deletes the `videos` rows but leaves the jobs a suite enqueued sitting in Redis; the worker then picks them up, cannot find the row, and fails them permanently. That is how `bull:video-processing:failed` reached 25 orphans, which had to be told apart from real failures by hand while debugging. Any suite that enqueues against the real queue must also call **`cleanVideoProcessingQueue`** (`src/test/clean-video-processing-queue.ts`) in its teardown — it is the Redis-side counterpart to `cleanAllTables`. Note `queue.drain()` alone is not enough: it leaves completed/failed jobs behind, which is why the helper also calls `queue.clean`.
+
+**A live worker competes with your spec.** The `video-worker` container consumes the same queue as the tests. A spec that asserts on a job it enqueued can have that job claimed by the container's worker first (`Job … could not be removed because it is locked by another worker`). `videos.service.integration-spec.ts` handles this by wrapping the assertion in `queue.pause()` / `queue.resume()` in a `finally`. If a queue spec is flaky only when `docker compose ps` shows `video-worker` running, this is why.
 
 ## Code Conventions
 

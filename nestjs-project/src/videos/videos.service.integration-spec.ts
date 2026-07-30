@@ -7,6 +7,7 @@ import {
   cleanAllTables,
   createTestDataSource,
 } from '../test/create-test-data-source';
+import { cleanVideoProcessingQueue } from '../test/clean-video-processing-queue';
 import storageConfig from '../config/storage.config';
 import queueConfig from '../config/queue.config';
 import { StorageModule } from '../storage/storage.module';
@@ -71,6 +72,14 @@ describe('VideosService (integration)', () => {
   });
 
   afterAll(async () => {
+    // Drain Redis as well as the DB: the jobs this suite enqueues outlive the
+    // `videos` rows that cleanAllTables removes, and the worker then fails them
+    // permanently as orphans. See clean-video-processing-queue.ts.
+    await cleanVideoProcessingQueue(
+      storageTestingModule.get<Queue<ProcessVideoJobData>>(
+        getQueueToken(VIDEO_PROCESSING_QUEUE),
+      ),
+    );
     await dataSource.destroy();
     await storageTestingModule.close();
   });
@@ -255,43 +264,55 @@ describe('VideosService (integration)', () => {
       const capturedEtag = uploadResponse.headers.get('etag');
       expect(capturedEtag).toBeDefined();
 
-      // Step 3: Complete upload with real ETag
-      const completeDto: CompleteUploadDto = {
-        parts: [{ partNumber: 1, etag: capturedEtag! }],
-      };
-
-      const completeResult = await videosService.completeUpload(
-        channel.id,
-        initiateResult.id,
-        completeDto,
-      );
-
-      expect(completeResult.id).toBe(initiateResult.id);
-      expect(completeResult.status).toBe(VideoStatus.PROCESSING);
-      expect(completeResult.upload_id).toBeNull();
-
-      // Step 4: Verify video was updated in DB
-      video = await videoRepository.findOneBy({ id: initiateResult.id });
-      expect(video!.status).toBe(VideoStatus.PROCESSING);
-      expect(video!.upload_id).toBeNull();
-
-      // Step 5: Get real BullMQ Queue instance and verify job was enqueued
+      // Step 3: Get the real BullMQ Queue and pause it before enqueueing.
+      // The `video-worker` Compose service is a live consumer on this same
+      // queue, so without pausing it can claim (and lock) the job this test
+      // enqueues before the assertions below run — making the test fail with
+      // "locked by another worker" purely because the worker is up. Pausing is
+      // global in Redis, so it is always restored in the `finally` block.
       const queue = storageTestingModule.get<Queue<ProcessVideoJobData>>(
         getQueueToken(VIDEO_PROCESSING_QUEUE),
       );
-      const jobs = await queue.getJobs(['waiting', 'delayed', 'active']);
-      const job = jobs.find((j) => j.data.videoId === initiateResult.id);
-      expect(job).toBeDefined();
+      await queue.pause();
 
-      // Step 6: Verify job options match acceptance criteria
-      expect(job!.opts.attempts).toBe(3);
-      expect(job!.opts.backoff).toEqual({
-        type: 'exponential',
-        delay: 5000,
-      });
+      try {
+        // Step 4: Complete upload with real ETag
+        const completeDto: CompleteUploadDto = {
+          parts: [{ partNumber: 1, etag: capturedEtag! }],
+        };
 
-      // Step 7: Clean up the test job
-      await job!.remove();
+        const completeResult = await videosService.completeUpload(
+          channel.id,
+          initiateResult.id,
+          completeDto,
+        );
+
+        expect(completeResult.id).toBe(initiateResult.id);
+        expect(completeResult.status).toBe(VideoStatus.PROCESSING);
+        expect(completeResult.upload_id).toBeNull();
+
+        // Step 5: Verify video was updated in DB
+        video = await videoRepository.findOneBy({ id: initiateResult.id });
+        expect(video!.status).toBe(VideoStatus.PROCESSING);
+        expect(video!.upload_id).toBeNull();
+
+        // Step 6: Verify the job was enqueued
+        const jobs = await queue.getJobs(['waiting', 'delayed', 'active']);
+        const job = jobs.find((j) => j.data.videoId === initiateResult.id);
+        expect(job).toBeDefined();
+
+        // Step 7: Verify job options match acceptance criteria
+        expect(job!.opts.attempts).toBe(3);
+        expect(job!.opts.backoff).toEqual({
+          type: 'exponential',
+          delay: 5000,
+        });
+
+        // Step 8: Clean up the test job
+        await job!.remove();
+      } finally {
+        await queue.resume();
+      }
     });
   });
 
