@@ -33,4 +33,5 @@ export const envValidationSchema = Joi.object({
   REDIS_PORT: Joi.number().default(6379),
   VIDEO_PROCESSING_ATTEMPTS: Joi.number().default(3),
   VIDEO_WORKER_CONCURRENCY: Joi.number().default(2),
+  VIDEO_WORKER_HEALTH_PORT: Joi.number().port().default(3001),
 });

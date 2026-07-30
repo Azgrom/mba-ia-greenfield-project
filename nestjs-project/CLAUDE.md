@@ -160,6 +160,15 @@ Upload, storage, async processing, and delivery of videos. Four modules: `videos
 
 The worker is a **separate Node process**, not part of `nestjs-api`. It runs as its own Compose service (`video-worker`) via `npm run start:worker:dev`. `VIDEO_WORKER_CONCURRENCY` (default BullMQ concurrency is 1) is only honored because `start:worker:dev` preloads `-r dotenv/config` — this loads `.env` before the `@Processor` decorator reads the concurrency option at import time, ahead of `ConfigModule.forRoot()`. If you ever see the worker silently running at concurrency 1 despite `VIDEO_WORKER_CONCURRENCY` being set, check that preload flag first.
 
+### Worker liveness — do not remove
+
+`video-worker` neither serves traffic nor is depended on by any other service, so for a week nothing noticed it was in `exited (1)` while the whole test suite reported green. Two mechanisms exist specifically to stop that recurring; treat both as load-bearing:
+
+- **`WorkerHealthService`** (`src/video-worker/worker-health.service.ts`) serves a liveness endpoint on `VIDEO_WORKER_HEALTH_PORT` (default `3001`), and `compose.yaml` healthchecks it. It answers 200 only when the BullMQ consumer `isRunning()` **and** its Redis connection is `ready` — "the process exists" is deliberately not enough to pass.
+- **`main.ts` passes `abortOnError: false`** and, on a failed boot, logs the cause and keeps the process alive answering 503. Without this, Nest exits with code 1 on a bootstrap error — and `docker compose ps` does not list stopped containers, so the crash vanishes from the default view. Staying up as `unhealthy` is what makes `docker compose ps`, `up --wait`, and `depends_on: condition: service_healthy` all report the failure.
+
+When checking the stack, `docker compose ps` alone is now sufficient for this service; before, `--all` was required to even see it.
+
 ### New infra services (`compose.yaml`)
 
 - `redis` — BullMQ backing store, port `6379`.

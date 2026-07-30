@@ -89,6 +89,23 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
+    # video-worker neither serves traffic nor is depended on by anything, so for
+    # a week nothing noticed it was in `exited (1)` — the full test suite stayed
+    # green over a dead consumer. This healthcheck is what makes that loud.
+    # `localhost` is correct here and is NOT the mistake CLAUDE.md warns about:
+    # the probe runs inside this same container, against its own health server.
+    # Returns 503 unless the BullMQ consumer is running with a live Redis link.
+    healthcheck:
+      test:
+        ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:3001/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      # Measured boot-to-healthy is ~10s (ts-node compile + TypeORM connect), so
+      # 40s is 4x headroom. A success during start_period marks it healthy
+      # immediately; the only thing this window delays is the *unhealthy*
+      # verdict, which is why it is not set far larger "just to be safe".
+      start_period: 40s
 
 volumes:
   minio-data:

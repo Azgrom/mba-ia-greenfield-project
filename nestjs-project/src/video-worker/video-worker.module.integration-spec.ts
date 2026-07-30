@@ -4,6 +4,7 @@ import { Queue } from 'bullmq';
 import { DataSource } from 'typeorm';
 import { VideoWorkerModule } from './video-worker.module';
 import { VideoProcessingProcessor } from './video-processing.processor';
+import { WorkerHealthService } from './worker-health.service';
 import { VIDEO_PROCESSING_QUEUE } from '../queue/video-queue.constants';
 import { Video } from '../videos/entities/video.entity';
 import { Channel } from '../channels/entities/channel.entity';
@@ -26,7 +27,16 @@ import { Channel } from '../channels/entities/channel.entity';
 describe('VideoWorkerModule (integration)', () => {
   let app: TestingModule;
 
+  // Pinned to a free high port rather than the .env value: this suite boots the
+  // real module inside the api container, where the worker's own 3001 may be
+  // taken, and a bind clash would fail the health assertion for the wrong reason.
+  const healthPort = '38102';
+  let previousHealthPort: string | undefined;
+
   beforeAll(async () => {
+    previousHealthPort = process.env.VIDEO_WORKER_HEALTH_PORT;
+    process.env.VIDEO_WORKER_HEALTH_PORT = healthPort;
+
     app = await Test.createTestingModule({
       imports: [VideoWorkerModule],
     }).compile();
@@ -51,6 +61,12 @@ describe('VideoWorkerModule (integration)', () => {
     const queue = app.get<Queue>(getQueueToken(VIDEO_PROCESSING_QUEUE));
     await app.close();
     await queue.disconnect();
+
+    if (previousHealthPort === undefined) {
+      delete process.env.VIDEO_WORKER_HEALTH_PORT;
+    } else {
+      process.env.VIDEO_WORKER_HEALTH_PORT = previousHealthPort;
+    }
   });
 
   it('initializes the database connection', () => {
@@ -70,6 +86,25 @@ describe('VideoWorkerModule (integration)', () => {
   it('registers the queue consumer so enqueued jobs have a processor', () => {
     expect(app.get(VideoProcessingProcessor)).toBeInstanceOf(
       VideoProcessingProcessor,
+    );
+  });
+
+  /**
+   * The Compose healthcheck for video-worker probes exactly this endpoint. It is
+   * the thing that would have surfaced WORKER-1 in minutes instead of a week, so
+   * it is asserted against a really-booted module, with the real BullMQ worker
+   * and real Redis — not against a mocked processor (that is the unit spec's job).
+   */
+  it('serves a healthy liveness signal on the port the Compose healthcheck probes', async () => {
+    const response = await fetch(`http://127.0.0.1:${healthPort}/`);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ status: 'ok' });
+  });
+
+  it('reports the consumer as live through the health service itself', async () => {
+    await expect(app.get(WorkerHealthService).isConsuming()).resolves.toBe(
+      true,
     );
   });
 });
