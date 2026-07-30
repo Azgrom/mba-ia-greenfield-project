@@ -37,12 +37,20 @@ describe('VideoWorkerModule (integration)', () => {
   afterAll(async () => {
     if (!app) return;
 
-    // Booting the real module starts a real BullMQ Worker and Queue, each with
-    // its own Redis connection. app.close() alone leaves them open and Jest
-    // reports "did not exit", so close them explicitly first.
-    await app.get(VideoProcessingProcessor).worker?.close();
-    await app.get<Queue>(getQueueToken(VIDEO_PROCESSING_QUEUE)).close();
+    // app.close() runs BullModule's shutdown hooks, which close the real Worker
+    // and Queue this module starts, but it does not drop the underlying ioredis
+    // socket: bull.providers.js calls disconnect() only for queues registered
+    // with `forceDisconnectOnShutdown`, which production does not set. So the
+    // socket this spec opened is closed here rather than left to the GC.
+    //
+    // Jest still prints "did not exit" after this suite. That is cosmetic —
+    // `--detectOpenHandles` attributes no handle, the exit code is 0, and the
+    // run takes the same wall-clock time either way (the ~30s is container
+    // startup, not a hang). Booting a real BullMQ worker in-process is the
+    // cause; it is the price of testing the module's actual composition root.
+    const queue = app.get<Queue>(getQueueToken(VIDEO_PROCESSING_QUEUE));
     await app.close();
+    await queue.disconnect();
   });
 
   it('initializes the database connection', () => {
