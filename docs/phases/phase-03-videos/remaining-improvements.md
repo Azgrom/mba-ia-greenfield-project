@@ -1,5 +1,7 @@
 # Phase 03 — Remaining Improvements (fresh-context handoff)
 
+> **EXECUTED 2026-07-30** on `bugfix/phase-03-remaining-improvements` (off `f760c23`). S1, S2, L1, L2, L3 are all closed — see "Execution record" at the end for the evidence and for the three things that did not go as this document predicted. The pre-existing follow-ups and `GIT-2` are untouched, as intended. Nothing has been pushed or merged; both release actions still await authorization.
+
 > **Written for a fresh context.** Everything needed is inline; no prior conversation required.
 > **Repo root:** `/run/media/rafael/master_backup/Repos/AI Works/FullCycle-IA-MBA/challenge/StreamTubeContinuation`
 > **Written:** 2026-07-30, after the acceptance-criteria verification pass.
@@ -217,3 +219,68 @@ Three commits were authored directly on `main` (`a970086`, `8e4af55`, `824faa4`)
 - `bull:video-processing:failed` no longer grows across suite runs (L3)
 - Full gates still green: `tsc` 0, eslint 0/0, 33 suites / 203 tests, 4 e2e suites / 92 tests, **with `video-worker` running** — that last condition is what `TEST-1` was about
 - `git status --short` shows no unintended changes; work on a `bugfix/*` branch off `dev`, never on `main`
+
+---
+
+# Execution record — 2026-07-30
+
+Branch `bugfix/phase-03-remaining-improvements`, four commits off `f760c23`:
+
+| Commit | Item |
+|---|---|
+| `578a4f2` | S1 — split the lint script |
+| `f73a8ee` | L1 — declare `dotenv` |
+| `85cc7dd` | S2 — video-worker healthcheck |
+| `01aa6c3` | L3 — bounded job retention + Redis-side test cleanup |
+
+Branched off the docs branch rather than bare `dev`, so the plan travels with the work; merging to `dev` later brings both.
+
+## Final gates — all with `video-worker` running and healthy
+
+| Gate | Result |
+|---|---|
+| `npx tsc --noEmit` | exit `0` |
+| `npx eslint "{src,apps,libs,test}/**/*.ts"` (no `--fix`) | exit `0` |
+| `npm run lint` (DoD literal) | exit `0`, `git status --short` **byte-identical** before/after |
+| `npm test -- --runInBand` | **34 suites / 220 tests** (was 33 / 203) |
+| `npm run test:e2e` | **4 suites / 92 tests** (unchanged) |
+| `bull:video-processing:*` across the full run | `failed=0 wait=0 completed=0 delayed=0` **before and after** |
+| `docker compose ps` | all services running; `video-worker` `Up (healthy)` |
+
+## Per-item evidence
+
+**S1.** `lint` is read-only, `lint:fix` carries `--fix`. No CI configs and no git hooks exist in this repo, so the only consumers were docs; the DoD wording in the root `CLAUDE.md` and the command table in `nestjs-project/CLAUDE.md` were updated. Historical records (`validation.md`, `acceptance-validation.md`, `progress.md`) were deliberately **not** rewritten — they describe what was true when written. The split immediately paid for itself: the first gate run after the S2 work reported a real prettier error instead of silently fixing it.
+
+**S2.** Implemented as the doc's preferred option 1 — a real liveness endpoint, not a process check. It answers 200 only when the BullMQ consumer `isRunning()` **and** its Redis connection is `ready`. Verified by reintroducing `WORKER-1`, as instructed:
+
+| | healthy | `WORKER-1` reintroduced |
+|---|---|---|
+| `docker compose ps` (default view) | `Up (healthy)` | `Up (unhealthy)` |
+| probe | `200 {"status":"ok"}` | `503 {"status":"boot-failed"}` |
+| `docker compose up -d --wait` | exit `0` | exit `1` |
+| `video-worker.module.integration-spec.ts` | 5/5 pass | **5/5 fail** |
+
+Then reverted; back to healthy. That spec has **not** regressed.
+
+**L1.** `npm ls dotenv` now shows `+-- dotenv@16.6.1` as a direct entry. Both live commands still behave as documented (`2` with the preload, `undefined` without).
+
+**L2 — closed as "not a defect", with evidence.** Ten consecutive runs of `video-processing.queue.integration-spec.ts` against a live, healthy `video-worker`: **10 passed / 0 failed**. The race does not bite in practice. No isolation change was made, so the spec keeps competing with the real container worker — which is the fidelity the project's "don't mock what you can run for real" rule wants. The per-run queue prefix was considered and rejected for that reason: it would have namespaced test jobs away from the real worker and quietly reduced what these specs prove.
+
+**L3.** Fixed on both sides rather than only in tests: `removeOnFail: false` became `FAILED_JOB_RETENTION` (7 days / 100 jobs), and `cleanVideoProcessingQueue` is now the Redis-side counterpart to `cleanAllTables` in every suite that enqueues. The 25 pre-existing orphans were cleared by the new helper as a side effect of the L2 loop. Note `queue.drain()` alone is insufficient — it leaves terminal states — so the helper also calls `queue.clean`.
+
+## Three things this document got wrong, or that it could not have known
+
+1. **A crash is not "unhealthy" — it is invisible.** The doc's DoD asks that `docker compose ps` report `video-worker` unhealthy when it cannot boot. A healthcheck alone does not achieve that: a crashed container is `Exited (1)`, and **plain `docker compose ps` does not list stopped containers at all**. That, not the missing healthcheck, is the deeper reason `WORKER-1` stayed hidden for a week — the doc's own environment section had to say `ps --all` to see it. So `main.ts` now passes `abortOnError: false` (without which Nest exits 1 itself and the bootstrap `catch` never runs) and keeps the process alive answering 503. Only then does the failure appear in the default `ps` view, and only then do `up --wait` and `depends_on: service_healthy` fail on it.
+
+2. **The "Jest did not exit" warning is gone.** The doc records it as cosmetic and warns against attacking it by guessing. It was not attacked — it simply no longer appears, in either the targeted run or the full 34-suite run. Flagged as an observation, not a claim of a fix: the cause was not investigated and this could be variance.
+
+3. **`start_period: 90s` would have been wrong.** Measured boot-to-healthy is **~10s**, so it is set to 40s. A success during `start_period` marks the service healthy immediately; the only thing a long window delays is the *unhealthy* verdict — so "generous just to be safe" is actively harmful here.
+
+## Process note, since this document is partly about how verification goes wrong
+
+Two self-inflicted failures during this pass, both worth recording because they are the same class of error the doc exists to prevent:
+
+- A verification script restored a deliberately-broken file with `git checkout --`. That file also held **uncommitted** work (the `WorkerHealthService` registration), which was silently discarded — after which the worker booted "successfully" with no health server and reported unhealthy for a reason that had nothing to do with the code under test. Roughly twenty minutes went into diagnosing framework behaviour that was not implicated at all. Destructive verification must snapshot with `cp`, never `git checkout`.
+- The first attempt at splitting commits by hunk index used a default-context diff, in which the two adjacent lint hunks merge into one — so the S1 commit silently swallowed the S2 documentation. Caught by checking `git diff --cached` before committing rather than after. The commits were local and unpushed, so they were reset and redone; no shared history was touched.
+
+Both were found by comparing measurements against expectations, not by re-reading the code.
