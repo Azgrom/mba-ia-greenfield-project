@@ -54,6 +54,8 @@ A change is only considered complete when **all** of the following pass:
 3. TypeScript compiles cleanly: `npx tsc --noEmit` exits with code 0. Compilation errors must never be left as debt for future tasks.
 4. Lint passes repo-wide: `npm run lint` exits with code 0. This is the criterion `PROJECT_INSTRUCTIONS.md` states, and it grants no scoped-to-the-diff exemption — "lint quebrado" is listed there under **Reprova automática**. The repo reached zero lint errors on 2026-07-29; do not reintroduce debt and do not rescope this gate to the diff.
 
+`npm run lint` is read-only by design (it carried `--fix` until 2026-07-30 and no longer does). Auto-fixing is `npm run lint:fix`, which is a developer convenience and **never** the gate — a command that rewrites the tree while measuring it cannot produce evidence that the tree was already clean.
+
 If any of these fails, the task is not done — fix the underlying issue before declaring completion.
 
 

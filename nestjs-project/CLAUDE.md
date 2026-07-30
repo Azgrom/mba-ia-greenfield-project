@@ -69,9 +69,12 @@ npm run test:cov                         # Coverage report
 npm run test:e2e                         # End-to-end tests (always with --runInBand)
 
 npx tsc --noEmit                         # Type-check (required before declaring a task done)
-npm run lint                             # ESLint with auto-fix
+npm run lint                             # ESLint, read-only — this is the DoD gate
+npm run lint:fix                         # ESLint with --fix (developer convenience, never the gate)
 npm run format                           # Prettier formatting
 ```
+
+`lint` and `lint:fix` are deliberately separate. A gate that can rewrite the tree it is judging cannot produce evidence: a green `--fix` run means "green *after* being rewritten", and it dirties the working tree as a side effect. Use `lint` to measure and `lint:fix` to change. Do not add `--fix` back to `lint`.
 
 ### Host-only commands (Docker / connectivity probes)
 
