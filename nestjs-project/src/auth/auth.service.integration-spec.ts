@@ -4,7 +4,7 @@ import { ConfigModule, ConfigType } from '@nestjs/config';
 import type { StringValue } from 'ms';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, IsNull, Repository } from 'typeorm';
 import appConfig from '../config/app.config';
 import authConfig from '../config/auth.config';
 import mailConfig from '../config/mail.config';
@@ -476,10 +476,14 @@ describe('AuthService — refresh (integration)', () => {
     const { access_token } = await authService.refresh(token1);
     expect(access_token).toBeDefined();
 
+    // `revoked_at: null` is silently dropped from the generated WHERE clause,
+    // so this used to count every token in the family rather than the active
+    // ones — see `.claude/rules/typeorm-queries.md`. `IsNull()` is what makes
+    // the predicate reach SQL, and it removes the need for the `as any` cast.
     const activeTokens = await refreshTokenRepository.findBy({
       family,
-      revoked_at: null,
-    } as any);
+      revoked_at: IsNull(),
+    });
     expect(activeTokens.length).toBeGreaterThan(0);
   });
 
