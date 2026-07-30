@@ -19,6 +19,7 @@ import { User } from '../users/entities/user.entity';
 import { Channel } from '../channels/entities/channel.entity';
 import { Video, VideoStatus } from '../videos/entities/video.entity';
 import { cleanAllTables } from '../test/create-test-data-source';
+import { cleanVideoProcessingQueue } from '../test/clean-video-processing-queue';
 import { StorageModule } from '../storage/storage.module';
 import { StorageService } from '../storage/storage.service';
 import { VideoQueueService } from '../queue/video-queue.service';
@@ -103,6 +104,9 @@ describe('Video processing queue (integration)', () => {
   }, 30000);
 
   afterAll(async () => {
+    // Must precede queue.close(): leftover jobs here become permanent orphans
+    // once cleanAllTables has removed the rows they point at.
+    await cleanVideoProcessingQueue(queue);
     await queueEvents.close();
     await queue.close();
     await fs.rm(tmpDir, { recursive: true, force: true });
@@ -111,7 +115,10 @@ describe('Video processing queue (integration)', () => {
 
   beforeEach(async () => {
     await cleanAllTables(dataSource);
-    await queue.drain(true);
+    // drain(true) alone leaves terminal-state jobs behind; the helper also
+    // clears completed/failed, so a previous test's orphans cannot be counted
+    // by this one.
+    await cleanVideoProcessingQueue(queue);
   });
 
   it('consumes an enqueued process-video job and marks the video ready', async () => {

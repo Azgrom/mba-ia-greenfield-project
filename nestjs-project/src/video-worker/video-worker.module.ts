@@ -12,6 +12,7 @@ import { Channel } from '../channels/entities/channel.entity';
 import { User } from '../users/entities/user.entity';
 import { StorageModule } from '../storage/storage.module';
 import { VideoProcessingProcessor } from './video-processing.processor';
+import { WorkerHealthService } from './worker-health.service';
 import { VIDEO_PROCESSING_QUEUE } from '../queue/video-queue.constants';
 
 @Module({
@@ -57,6 +58,6 @@ import { VIDEO_PROCESSING_QUEUE } from '../queue/video-queue.constants';
     }),
     StorageModule,
   ],
-  providers: [VideoProcessingProcessor],
+  providers: [VideoProcessingProcessor, WorkerHealthService],
 })
 export class VideoWorkerModule {}

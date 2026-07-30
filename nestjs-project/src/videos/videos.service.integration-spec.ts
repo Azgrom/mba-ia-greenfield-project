@@ -7,6 +7,7 @@ import {
   cleanAllTables,
   createTestDataSource,
 } from '../test/create-test-data-source';
+import { cleanVideoProcessingQueue } from '../test/clean-video-processing-queue';
 import storageConfig from '../config/storage.config';
 import queueConfig from '../config/queue.config';
 import { StorageModule } from '../storage/storage.module';
@@ -71,6 +72,14 @@ describe('VideosService (integration)', () => {
   });
 
   afterAll(async () => {
+    // Drain Redis as well as the DB: the jobs this suite enqueues outlive the
+    // `videos` rows that cleanAllTables removes, and the worker then fails them
+    // permanently as orphans. See clean-video-processing-queue.ts.
+    await cleanVideoProcessingQueue(
+      storageTestingModule.get<Queue<ProcessVideoJobData>>(
+        getQueueToken(VIDEO_PROCESSING_QUEUE),
+      ),
+    );
     await dataSource.destroy();
     await storageTestingModule.close();
   });

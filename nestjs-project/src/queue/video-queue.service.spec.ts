@@ -7,6 +7,7 @@ import { VideoQueueService } from './video-queue.service';
 import {
   VIDEO_PROCESSING_QUEUE,
   PROCESS_VIDEO_JOB,
+  FAILED_JOB_RETENTION,
   type ProcessVideoJobData,
 } from './video-queue.constants';
 
@@ -60,7 +61,7 @@ describe('VideoQueueService', () => {
           attempts: 3,
           backoff: { type: 'exponential', delay: 5000 },
           removeOnComplete: true,
-          removeOnFail: false,
+          removeOnFail: FAILED_JOB_RETENTION,
         },
       );
     });
@@ -100,7 +101,7 @@ describe('VideoQueueService', () => {
         attempts: 3,
         backoff: { type: 'exponential', delay: 5000 },
         removeOnComplete: true,
-        removeOnFail: false,
+        removeOnFail: FAILED_JOB_RETENTION,
       });
     });
   });
