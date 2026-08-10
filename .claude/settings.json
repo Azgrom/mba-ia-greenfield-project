@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'Identify and activate relevant skills for this task.'"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -c 'if (.tool_input.run_in_background == true) or ((.tool_input.command // \"\") | test(\"^\\\\s*timeout\\\\s\")) then {} else {hookSpecificOutput: {hookEventName: \"PreToolUse\", permissionDecision: \"allow\", updatedInput: (.tool_input + {command: (\"timeout 300s bash -c \" + (.tool_input.command | @sh))})}} end'"
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "figma@claude-plugins-official": true
+  }
+}

@@ -1,0 +1,111 @@
+services:
+  nestjs-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - 3000:3000
+    volumes:
+      - .:/home/node/app
+    depends_on:
+      db:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+  db:
+    image: postgres:17
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=streamtube
+      - POSTGRES_PASSWORD=streamtube
+      - POSTGRES_DB=streamtube
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U streamtube"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  mailpit:
+    image: axllent/mailpit
+    ports:
+      - "11025:1025"
+      - "8025:8025"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=streamtube
+      - MINIO_ROOT_PASSWORD=streamtube123
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - minio-data:/data
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 streamtube streamtube123 &&
+      mc mb --ignore-existing local/streamtube
+      "
+
+  video-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    command: npm run start:worker:dev
+    volumes:
+      - .:/home/node/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    # video-worker neither serves traffic nor is depended on by anything, so for
+    # a week nothing noticed it was in `exited (1)` — the full test suite stayed
+    # green over a dead consumer. This healthcheck is what makes that loud.
+    # `localhost` is correct here and is NOT the mistake CLAUDE.md warns about:
+    # the probe runs inside this same container, against its own health server.
+    # Returns 503 unless the BullMQ consumer is running with a live Redis link.
+    healthcheck:
+      test:
+        ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:3001/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      # Measured boot-to-healthy is ~10s (ts-node compile + TypeORM connect), so
+      # 40s is 4x headroom. A success during start_period marks it healthy
+      # immediately; the only thing this window delays is the *unhealthy*
+      # verdict, which is why it is not set far larger "just to be safe".
+      start_period: 40s
+
+volumes:
+  minio-data:

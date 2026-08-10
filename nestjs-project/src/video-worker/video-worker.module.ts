@@ -1,0 +1,63 @@
+import { Module } from '@nestjs/common';
+import { ConfigModule, ConfigType } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { BullModule } from '@nestjs/bullmq';
+import appConfig from '../config/app.config';
+import databaseConfig from '../config/database.config';
+import storageConfig from '../config/storage.config';
+import queueConfig from '../config/queue.config';
+import { envValidationSchema } from '../config/env.validation';
+import { Video } from '../videos/entities/video.entity';
+import { Channel } from '../channels/entities/channel.entity';
+import { User } from '../users/entities/user.entity';
+import { StorageModule } from '../storage/storage.module';
+import { VideoProcessingProcessor } from './video-processing.processor';
+import { WorkerHealthService } from './worker-health.service';
+import { VIDEO_PROCESSING_QUEUE } from '../queue/video-queue.constants';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,
+      load: [appConfig, databaseConfig, storageConfig, queueConfig],
+      validationSchema: envValidationSchema,
+      validationOptions: { allowUnknown: true, abortEarly: false },
+    }),
+    TypeOrmModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [databaseConfig.KEY],
+      useFactory: (dbConfig: ConfigType<typeof databaseConfig>) => ({
+        type: 'postgres',
+        host: dbConfig.host,
+        port: dbConfig.port,
+        username: dbConfig.username,
+        password: dbConfig.password,
+        database: dbConfig.name,
+        autoLoadEntities: true,
+        synchronize: false,
+      }),
+    }),
+    // The worker only reads/writes Video, but TypeORM needs the whole relation
+    // closure registered to build metadata at all: autoLoadEntities picks up
+    // only what forFeature declares, and Video.channel -> Channel.user means a
+    // missing Channel or User fails the entire boot, not just those relations.
+    // video-worker.module.integration-spec.ts guards this against drift.
+    TypeOrmModule.forFeature([Video, Channel, User]),
+    BullModule.forRootAsync({
+      imports: [ConfigModule.forFeature(queueConfig)],
+      inject: [queueConfig.KEY],
+      useFactory: (cfg: ConfigType<typeof queueConfig>) => ({
+        connection: {
+          host: cfg.redisHost,
+          port: cfg.redisPort,
+        },
+      }),
+    }),
+    BullModule.registerQueue({
+      name: VIDEO_PROCESSING_QUEUE,
+    }),
+    StorageModule,
+  ],
+  providers: [VideoProcessingProcessor, WorkerHealthService],
+})
+export class VideoWorkerModule {}
